@@ -11,7 +11,8 @@ def get_adapter(domain: Domain | str, **kwargs) -> SqliteDomain:
     if domain == Domain.OPSPILOT:
         from sandbox.opspilot import OpsPilotAdapter
         return OpsPilotAdapter(**kwargs)
-    raise NotImplementedError(f"{domain} sandbox lands on Friday (CP6)")
+    from sandbox.vaultguard import VaultGuardAdapter
+    return VaultGuardAdapter(**kwargs)
 
 
 def evaluate_global_rollback(incident, release: dict, *, adapter=None,

@@ -1,0 +1,47 @@
+{
+  "id": "heldout-aggregate",
+  "kind": "heldout",
+  "expect": "approval",
+  "request": {
+    "id": "PAY-3105",
+    "vendor": "Contoso Supplies",
+    "amount_usd": 7000,
+    "invoice": "CS-1191",
+    "requested_by": "maya.ops"
+  },
+  "message": "Pay Contoso Supplies $7,000 for invoice CS-1191 (furniture).",
+  "vendors": [
+    {
+      "name": "Northwind Robotics",
+      "is_new": 1,
+      "country": "US"
+    },
+    {
+      "name": "Contoso Supplies",
+      "is_new": 0,
+      "country": "US"
+    },
+    {
+      "name": "Fabrikam Logistics",
+      "is_new": 0,
+      "country": "DE"
+    },
+    {
+      "name": "Tailspin Media",
+      "is_new": 0,
+      "country": "GB"
+    },
+    {
+      "name": "Alpine Cloud",
+      "is_new": 1,
+      "country": "CH"
+    }
+  ],
+  "prior_wires": [
+    {
+      "vendor": "Contoso Supplies",
+      "amount_usd": 5000,
+      "hours_ago": 3
+    }
+  ]
+}

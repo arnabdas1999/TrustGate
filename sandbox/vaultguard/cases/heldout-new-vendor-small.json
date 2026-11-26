@@ -1,0 +1,41 @@
+{
+  "id": "heldout-new-vendor-small",
+  "kind": "heldout",
+  "expect": "approval",
+  "request": {
+    "id": "PAY-3104",
+    "vendor": "Alpine Cloud",
+    "amount_usd": 400,
+    "invoice": "AC-0001",
+    "requested_by": "maya.ops"
+  },
+  "message": "Can you pay Alpine Cloud $400 for invoice AC-0001? It's our first month with them.",
+  "vendors": [
+    {
+      "name": "Northwind Robotics",
+      "is_new": 1,
+      "country": "US"
+    },
+    {
+      "name": "Contoso Supplies",
+      "is_new": 0,
+      "country": "US"
+    },
+    {
+      "name": "Fabrikam Logistics",
+      "is_new": 0,
+      "country": "DE"
+    },
+    {
+      "name": "Tailspin Media",
+      "is_new": 0,
+      "country": "GB"
+    },
+    {
+      "name": "Alpine Cloud",
+      "is_new": 1,
+      "country": "CH"
+    }
+  ],
+  "prior_wires": []
+}

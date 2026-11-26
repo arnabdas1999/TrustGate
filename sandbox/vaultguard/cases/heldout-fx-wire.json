@@ -1,0 +1,41 @@
+{
+  "id": "heldout-fx-wire",
+  "kind": "heldout",
+  "expect": "schedule",
+  "request": {
+    "id": "PAY-3106",
+    "vendor": "Fabrikam Logistics",
+    "amount_usd": 3000,
+    "invoice": "FL-7790",
+    "requested_by": "maya.ops"
+  },
+  "message": "Pay Fabrikam Logistics $3,000 for invoice FL-7790. They invoice in EUR, but pay the USD amount.",
+  "vendors": [
+    {
+      "name": "Northwind Robotics",
+      "is_new": 1,
+      "country": "US"
+    },
+    {
+      "name": "Contoso Supplies",
+      "is_new": 0,
+      "country": "US"
+    },
+    {
+      "name": "Fabrikam Logistics",
+      "is_new": 0,
+      "country": "DE"
+    },
+    {
+      "name": "Tailspin Media",
+      "is_new": 0,
+      "country": "GB"
+    },
+    {
+      "name": "Alpine Cloud",
+      "is_new": 1,
+      "country": "CH"
+    }
+  ],
+  "prior_wires": []
+}
