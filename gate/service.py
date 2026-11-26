@@ -91,6 +91,8 @@ class GateDeps:
     audit: AuditLog
     fingerprint: Callable[[str], str]
     document: Callable[[str], dict[str, Any]]
+    settle_reads: int = 15  # after a write, read the edge document up to this many times
+    settle_interval_s: float = 2.0
 
     @classmethod
     def from_settings(cls, s: GateSettings) -> GateDeps:
@@ -190,7 +192,8 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
     def write(req: WriteRequest) -> dict[str, Any]:
         d = need()
         executor = Executor(approvals=d.approvals, scope=d.scope, ids=d.ids, mcp=d.mcp,
-                            fingerprint=d.fingerprint, audit=d.audit)
+                            fingerprint=d.fingerprint, audit=d.audit,
+                            settle_reads=d.settle_reads, settle_interval_s=d.settle_interval_s)
         try:
             return executor.execute(req.approval, req.ops, req.fingerprint).to_dict()
         except ApprovalRefused as exc:

@@ -15,6 +15,7 @@ fingerprint and the verifier's read-back catch an unexpected difference.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -39,6 +40,7 @@ class ExecutionResult:
     results: list[WriteResult] = field(default_factory=list)
     fingerprint_before: str | None = None
     fingerprint_after: str | None = None
+    after_settled: bool = False  # True once the edge document showed the write
 
     @property
     def version_uuids(self) -> list[str]:
@@ -50,7 +52,8 @@ class ExecutionResult:
                 "results": [{"ok": r.ok, "detail": r.detail, "version_uuid": r.version_uuid}
                             for r in self.results],
                 "fingerprint_before": self.fingerprint_before,
-                "fingerprint_after": self.fingerprint_after}
+                "fingerprint_after": self.fingerprint_after,
+                "after_settled": self.after_settled}
 
 
 class WriteFailed(Exception):
@@ -62,13 +65,31 @@ class WriteFailed(Exception):
 
 class Executor:
     def __init__(self, *, approvals: ApprovalStore, scope: GateScope, ids: IdResolver, mcp: Any,
-                 fingerprint: Callable[[str], str], audit: AuditLog):
+                 fingerprint: Callable[[str], str], audit: AuditLog, settle_reads: int = 15,
+                 settle_interval_s: float = 2.0, sleep: Callable[[float], None] = time.sleep):
         self._approvals = approvals
         self._scope = scope
         self._ids = ids
         self._mcp = mcp
         self._fingerprint = fingerprint
         self._audit = audit
+        self._settle_reads = settle_reads
+        self._settle_interval_s = settle_interval_s
+        self._sleep = sleep
+
+    def _after_fingerprint(self, environment: str, before: str) -> tuple[str | None, bool]:
+        """The edge document lags a write by a few seconds (seen Nov 26). Read until it moves."""
+        after = None
+        for attempt in range(self._settle_reads):
+            try:
+                after = self._fingerprint(environment)
+            except Exception:  # noqa: BLE001 (the write already happened; report, don't hide it)
+                return None, False
+            if after != before:
+                return after, True
+            if attempt + 1 < self._settle_reads:
+                self._sleep(self._settle_interval_s)
+        return after, False
 
     def _refuse(self, approval: Approval, reason: str) -> None:
         self._audit.append(actor="executor", action="refused", tool=None, args={},
@@ -109,13 +130,11 @@ class Executor:
 
         results = send(calls, self._mcp)
         ok = bool(results) and all(r.ok for r in results) and len(results) == len(calls)
-        try:
-            after = self._fingerprint(environment)
-        except Exception:  # noqa: BLE001 (the write already happened; report, don't hide it)
-            after = None
-
+        # Only wait for the edge to move if something was written.
+        after, settled = self._after_fingerprint(environment, before) if ok else (None, False)
         result = ExecutionResult(approval.proposal_id, approval.approval_id,
-                                 "applied" if ok else "failed", calls, results, before, after)
+                                 "applied" if ok else "failed", calls, results, before, after,
+                                 settled)
         failure = next((r.detail for r in results if not r.ok), "")
         self._audit.append(
             actor="executor", action="write", tool=calls[0].tool,
@@ -123,7 +142,7 @@ class Executor:
             result="applied" if ok else f"failed: {failure}"[:500],
             proposal_id=approval.proposal_id, approval_id=approval.approval_id,
             approver=used.approver, payload_hash=used.payload_hash,
-            fingerprint_before=before, fingerprint_after=after,
+            fingerprint_before=before, fingerprint_after=after, after_settled=settled,
             version_uuids=result.version_uuids)
         if not ok:
             raise WriteFailed(result)

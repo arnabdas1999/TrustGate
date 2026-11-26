@@ -64,10 +64,27 @@ def parts(tmp_path):
     return approvals, audit
 
 
-def _executor(parts, mcp, fps):
+def _executor(parts, mcp, fps, settle_reads=1):
     approvals, audit = parts
     return Executor(approvals=approvals, scope=SCOPE, ids=IDS, mcp=mcp, fingerprint=fps,
-                    audit=audit)
+                    audit=audit, settle_reads=settle_reads, sleep=lambda s: None)
+
+
+def test_after_fingerprint_waits_for_the_edge_to_catch_up(parts):
+    # The edge document lags a write by a few seconds: keep reading until it moves.
+    mcp, fps = FakeMcp(), Fingerprints(FP_OK, FP_OK, FP_OK, FP_NEW)
+    ops = _ops()
+    result = _executor(parts, mcp, fps, settle_reads=5).execute(_approval(ops), ops, FP_OK)
+    assert result.fingerprint_after == FP_NEW and result.after_settled
+
+
+def test_after_fingerprint_gives_up_and_says_so(parts):
+    mcp, fps = FakeMcp(), Fingerprints(FP_OK, FP_OK, FP_OK, FP_OK)
+    ops = _ops()
+    result = _executor(parts, mcp, fps, settle_reads=3).execute(_approval(ops), ops, FP_OK)
+    assert result.status == "applied"
+    assert result.fingerprint_after == FP_OK and not result.after_settled
+    assert parts[1].entries()[-1]["after_settled"] is False
 
 
 def test_approved_write_is_sent_and_audited(parts):

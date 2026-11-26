@@ -43,7 +43,7 @@ def setup(tmp_path):
         approvals=ApprovalStore(tmp_path / "a.db", secret=SECRET, scope=SCOPE),
         audit=AuditLog(tmp_path / "audit.jsonl"),
         fingerprint=lambda env: fps["value"],
-        document=lambda env: DOC)
+        document=lambda env: DOC, settle_reads=1)
     return TestClient(create_app(deps)), mcp, fps, deps
 
 
