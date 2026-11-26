@@ -24,9 +24,59 @@ _TODO (Arnab, Saturday): architecture diagram and a 5-line walkthrough._
 
 ## How we use Flagsmith
 
-_TODO (Naman, Saturday): required by the hackathon rules._ MCP server (allowlisted reads and the
-approved write), CLI (environment snapshots and audit log), Python SDK (runtime flags and
-read-back), segments (the repair itself).
+Flagsmith is the system TrustGate investigates and repairs. Without it there is nothing to
+diagnose and no way to apply a fix.
+
+**Flags drive the agents.** OpsPilot and VaultGuard read their model, prompt version, tool
+policy, step limit and context mode from Flagsmith per request, with trusted traits (`env`,
+`tier`, `amount_usd`, `new_vendor`) set in code. Each incident records the flag values the
+failing agent actually received. *(in progress in `sandbox/`)*
+
+**Snapshots and the release diff.** `scripts/release.py` plays the team shipping a release.
+Before and after, it saves:
+- the **edge environment document** (what the SDK evaluates; current right after a write)
+- the **Admin API environment document** (typed values: the edge returns integers as strings,
+  e.g. `"6"`)
+
+The diff between the two snapshots is the suspect list. The audit log is never parsed for
+values.
+
+**Fingerprint and the stale check.** The gate fingerprints an environment as a SHA-256 over
+its feature states, segment rules and segment overrides from the edge document (ids and
+timestamps dropped). We use the edge document because the Admin API document (the one the
+Flagsmith CLI reads) kept serving the old state for 26–68 s after a write in our tests. Every
+proposal is registered with the gate at its fingerprint. A write is refused (409) if
+Flagsmith has changed since.
+
+**MCP for reads.** The gate talks to the hosted Flagsmith MCP server
+(`https://mcp.flagsmith.com/mcp`), which exposes 54 tools. The investigator can use 8 of
+them, by exact name, plus two reads the gate serves itself:
+- `get_environment_document`: the canonical edge document
+- `get_audit_log`: the gate's own trail
+
+Organisation listings, code references and every other tool are refused. Reads must name our
+project or environment.
+
+**MCP for the one write, via v2 feature versioning.** Every environment in our organisation,
+including ones we created, came up with v2 feature versioning on, and v2 can't be switched
+off. The legacy write tools (`create_segment_override`, `update_feature_state`,
+`delete_feature_segment`) only work without v2. So every approved change is one
+`create_environment_feature_version` call per feature, with `publish_immediately: true`:
+- `feature_states_to_create`: add a segment override
+- `feature_states_to_update`: change the environment default
+- `segment_ids_to_delete_overrides`: remove an override
+
+The version's description carries the proposal and approval ids.
+
+**Verification.** After a write, the verifier resolves a tier-0 identity and a staging
+identity through the edge identities endpoint (server-side key, transient identity) and
+polls for up to 60 s. Values from a default handler never count.
+
+**Audit trail.** On our plan, Flagsmith's audit endpoint returned HTTP 500 or no entries, and
+v2 versions record no author for API-key writes. So the gate keeps its own append-only,
+hash-chained JSONL trail: who approved, the payload hash, the fingerprints before and after,
+and the result. We match Flagsmith's version history (`get_environment_feature_versions`) by
+version uuid to get "when".
 
 ## Quickstart
 
@@ -78,8 +128,73 @@ The web app reads `NEXT_PUBLIC_API_URL` at build time (default `http://localhost
 
 ## Security model
 
-_TODO (Naman)._ The investigator holds no Flagsmith key; only the gate does. Writes need a
-single-use, expiring, signed approval bound to the exact payload.
+TrustGate's investigator works on its own, but it can't change Flagsmith. Only the gate holds
+the organisation key, and it writes only an exact, human-approved change.
+
+| Component | Holds | Can do |
+|---|---|---|
+| Investigator agent (LLM) | No Flagsmith key | Allowlisted reads through the gate; start sandbox replays; draft proposals |
+| TrustGate MCP server | No key, no write tools | Start and follow investigations; allowlisted reads via the gate; return a proposal and its approval link |
+| API | Approval signing secret; approver password session | Sign a single-use approval when a logged-in human approves |
+| Gate (separate process) | Organisation API key; server-side keys; signing secret | Allowlisted reads; one approved write at a time |
+| Verifier | Server-side environment key (evaluation only) | Read-back after a write |
+
+**What the gate enforces on every write:**
+- the approval's HMAC signature
+- single use: per approval id and per proposal, enforced in the gate's own database
+- an expiry of at most 15 minutes, judged by the gate's clock
+- the payload hash, recomputed from the ops it receives
+- project and environment scope
+- the stale check against the fingerprint it recorded at registration, plus a short window
+  that refuses the state it has just written over while the edge document lags
+- one write per environment at a time, in an append-only audit trail
+
+**The LLM never builds a payload.** Code builds the write from the validated repair (flag,
+segment, value). Injected text in traces or descriptions can at worst reorder suspects.
+
+**What the gate cannot stop.**
+- A coding agent with a shell on the same machine could read a key from disk or call the
+  approve endpoint directly. TrustGate governs agents whose only route to Flagsmith is
+  TrustGate. It doesn't contain an agent that has a shell on the same machine.
+- The stale check is stale-state *detection*, not atomic execution. Flagsmith has no
+  conditional write, so a change landing between the check and the write can slip through.
+  The after-write fingerprint and the verifier's read-back report any unexpected difference.
+
+**Known limits:**
+- The approver's name isn't covered by the signature yet. The gate records it as claimed,
+  not verified.
+- The write lock lives in one process, so the gate must run as a single worker.
+- An API–gate bearer token exists but is off by default.
+
+## Use TrustGate from Claude Code (MCP)
+
+`mcp_server/` is a small stdio MCP server. It has no write tools. Its tools:
+- `investigate_incident` and `get_investigation`
+- the allowlisted Flagsmith reads, served by the gate
+- `propose_change`, which returns the repair and the link where a human approves it
+
+With the stack running locally (API on 8000, gate on 8100, web on 3000), add to
+`.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "trustgate": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/TrustGate", "python", "-m", "mcp_server"],
+      "env": {
+        "TRUSTGATE_API_URL": "http://localhost:8000",
+        "GATE_URL": "http://localhost:8100",
+        "TRUSTGATE_WEB_URL": "http://localhost:3000"
+      }
+    }
+  }
+}
+```
+
+Then ask Claude Code: *"Investigate incident inc_hero and show me the proposed change."*
+Under `docker compose`, the gate's port isn't published. Run the MCP server inside the
+compose network instead (an `mcp` compose service is proposed).
 
 ## Search and testing
 
