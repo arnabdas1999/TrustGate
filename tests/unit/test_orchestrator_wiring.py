@@ -55,3 +55,17 @@ def test_background_runs_and_never_raises():
 
     run_in_background(work, name="t").join(timeout=5)
     assert seen == [1]
+
+
+def test_reinvestigate_in_background_calls_the_orchestrator(monkeypatch):
+    from orchestrator import wiring
+
+    seen = []
+
+    class Orch:
+        def reinvestigate(self, inv_id):
+            seen.append(inv_id)
+
+    monkeypatch.setattr(wiring, "orchestrator_for", lambda store: Orch())
+    wiring.reinvestigate_in_background(object(), "inv_9").join(timeout=5)
+    assert seen == ["inv_9"]

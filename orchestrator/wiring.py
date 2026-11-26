@@ -110,3 +110,10 @@ def verify_in_background(store: Any, investigation_id: str) -> threading.Thread:
     orch = orchestrator_for(store)
     return run_in_background(lambda: orch.verify_after_write(investigation_id),
                              name=f"verify-{investigation_id}")
+
+
+def reinvestigate_in_background(store: Any, investigation_id: str) -> threading.Thread:
+    """For the API's 409 (STALE) branch: start over from the snapshots."""
+    orch = orchestrator_for(store)
+    return run_in_background(lambda: orch.reinvestigate(investigation_id),
+                             name=f"reinvestigate-{investigation_id}")
