@@ -135,6 +135,18 @@ class McpClient:
                 time.sleep(self._backoff_s * (attempt + 1))
         raise AssertionError("unreachable")
 
+    def list_tools(self) -> list[dict[str, Any]]:
+        """All tools the server exposes (a read; used by the hour-one integration check)."""
+        self._with_retries(self._ensure_session)
+        tools: list[dict[str, Any]] = []
+        cursor = None
+        while True:
+            result = self._rpc("tools/list", {"cursor": cursor} if cursor else {})
+            tools += result.get("tools") or []
+            cursor = result.get("nextCursor")
+            if not cursor:
+                return tools
+
     def _with_retries(self, fn) -> None:
         for attempt in range(1 + self._read_retries):
             try:

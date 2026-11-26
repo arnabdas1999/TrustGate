@@ -152,6 +152,21 @@ def test_from_env_reads_key_and_url():
     client.close()
 
 
+def test_list_tools_follows_pages():
+    pages = {None: {"tools": [{"name": "a"}], "nextCursor": "c2"},
+             "c2": {"tools": [{"name": "b"}]}}
+
+    def handler(request):
+        msg = json.loads(request.content)
+        if msg["method"] == "tools/list":
+            page = pages[(msg.get("params") or {}).get("cursor")]
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": msg["id"], "result": page})
+        return FakeServer(sse=False)(request)
+
+    client = McpClient(URL, KEY, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert [t["name"] for t in client.list_tools()] == ["a", "b"]
+
+
 def test_server_key_is_refused_as_the_org_key():
     with pytest.raises(McpError, match="organisation"):
         McpClient(URL, "ser.abcdef")
