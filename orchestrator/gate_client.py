@@ -45,10 +45,16 @@ class GateClient:
     def read(self, tool: str, args: dict[str, Any]) -> Any:
         return self._call("POST", "/gate/read", json={"tool": tool, "args": args})["result"]
 
-    def audit_entries(self, environment: str, features: Sequence[str]) -> list[AuditEntry]:
-        """The gate's audit trail as API AuditEntry rows (lines that don't fit are skipped)."""
-        result = self.read("get_audit_log", {"environment": environment,
-                                             "features": list(features)})
+    def audit_entries(self, environment: str | None = None,
+                      features: Sequence[str] = ()) -> list[AuditEntry]:
+        """The gate's audit trail as API AuditEntry rows (lines that don't fit are skipped).
+
+        With an environment and features, the gate also merges Flagsmith's version history.
+        """
+        args: dict[str, Any] = {}
+        if environment and features:
+            args = {"environment": environment, "features": list(features)}
+        result = self.read("get_audit_log", args)
         entries = []
         for line in result.get("gate", []):
             try:

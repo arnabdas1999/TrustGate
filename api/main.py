@@ -33,6 +33,7 @@ from contracts import (
     Timestamps,
     sign_approval,
 )
+from orchestrator.gate_client import GateClient, GateError
 
 
 def create_app(mock: bool | None = None) -> FastAPI:
@@ -156,8 +157,15 @@ def create_app(mock: bool | None = None) -> FastAPI:
     # --- audit trail and activity ---------------------------------------------------------
     @app.get("/api/audit", response_model=list[AuditEntry])
     def audit(db: Store = Depends(store)) -> list[AuditEntry]:
-        # TODO(naman): read the gate's append-only log instead of the in-memory list.
-        return sorted(db.audit, key=lambda e: e.ts)
+        # The gate's append-only trail (reads, refusals, writes) plus the API's own approve and
+        # reject entries. MOCK=1 keeps serving the in-memory fixtures only.
+        entries = list(db.audit)
+        if not app.state.mock:
+            try:
+                entries += GateClient(settings.gate_url()).audit_entries()
+            except GateError as exc:
+                raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        return sorted(entries, key=lambda e: e.ts)
 
     @app.post("/api/activity", status_code=204)
     def record_activity(ping: ActivityPing, db: Store = Depends(store)) -> None:

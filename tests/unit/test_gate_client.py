@@ -65,3 +65,11 @@ def test_unreachable_gate_raises():
 
     with pytest.raises(GateError, match="unreachable"):
         _client(handler).fingerprint("Development")
+
+
+def test_audit_entries_without_environment_asks_for_the_gate_trail_only():
+    def handler(request):
+        assert json.loads(request.content) == {"tool": "get_audit_log", "args": {}}
+        return httpx.Response(200, json={"result": {"gate": [GATE_LINE]}})
+
+    assert len(_client(handler).audit_entries()) == 1
