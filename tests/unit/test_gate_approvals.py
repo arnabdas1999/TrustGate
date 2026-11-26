@@ -217,3 +217,14 @@ def test_written_over_fingerprint_is_remembered_per_environment(tmp_path, clock)
     assert not s2.was_written_over("Demo Production", "f" * 64)
     s2.mark_written_over("Development", "g" * 64)  # only the last one counts
     assert not s2.was_written_over("Development", "f" * 64)
+
+
+def test_written_over_record_expires_after_the_edge_lag_window(tmp_path):
+    clock = Clock()
+    store = ApprovalStore(tmp_path / "a.db", secret=SECRET, scope=SCOPE, clock=clock)
+    store.mark_written_over("Development", "f" * 64)
+    clock.now = NOW + timedelta(seconds=90)
+    assert store.was_written_over("Development", "f" * 64)  # edge may still lag
+    clock.now = NOW + timedelta(minutes=3)
+    # Flagsmith really is back at that state (e.g. a revert): new proposals may use it.
+    assert not store.was_written_over("Development", "f" * 64)

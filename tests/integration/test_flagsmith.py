@@ -72,8 +72,16 @@ def _executor(live, tmp_path, secret):
                     audit=AuditLog(tmp_path / "audit.jsonl"))
 
 
+def _run(executor, ops, secret, fingerprint):
+    """Register the proposal at `fingerprint` (what /gate/register records), approve, execute."""
+    approval = _approve(ops, secret)
+    executor._approvals.register_proposal(approval.proposal_id, approval.payload_hash,
+                                          fingerprint, ENV)
+    return executor.execute(approval, ops)
+
+
 def _approve(ops, secret):
-    approval_id, proposal_id = f"appr_it_{secrets.token_hex(4)}", "prop_it"
+    approval_id, proposal_id = f"appr_it_{secrets.token_hex(4)}", f"prop_it_{secrets.token_hex(4)}"
     expires = datetime.now(UTC) + timedelta(minutes=10)
     ph = payload_hash(ops)
     a = Approval(proposal_id=proposal_id, approval_id=approval_id, approver="integration-test",
@@ -125,7 +133,7 @@ def test_stale_fingerprint_blocks_the_write(live, tmp_path):
     secret = secrets.token_hex(16)
     ops = [_op("create_segment_override", OVERRIDE, live=live)]
     with pytest.raises(StaleState):
-        _executor(live, tmp_path, secret).execute(_approve(ops, secret), ops, "0" * 64)
+        _run(_executor(live, tmp_path, secret), ops, secret, "0" * 64)
     assert canonical_view(live["document"]())["segments"][SEGMENT]["overrides"] == {}
 
 
@@ -179,7 +187,7 @@ def test_segment_override_write_readback_and_cleanup(live, tmp_path):
     create = [_op("create_segment_override", OVERRIDE, live=live)]
     applied = False
     try:
-        result = executor.execute(_approve(create, secret), create, start_fp)
+        result = _run(executor, create, secret, start_fp)
         applied = True
         assert result.status == "applied" and result.version_uuids
         assert result.after_settled and result.fingerprint_after != start_fp
@@ -195,7 +203,7 @@ def test_segment_override_write_readback_and_cleanup(live, tmp_path):
         if applied or _overrides(canonical_view(live["document"]())):
             current = _settled(live, lambda v: bool(_overrides(v)))
             remove = [_op("delete_feature_segment", live=live)]
-            executor.execute(_approve(remove, secret), remove, current)
+            _run(executor, remove, secret, current)
     assert _settled(live, lambda v: not _overrides(v)) == start_fp
     writes = [e for e in executor._audit.entries() if e["action"] == "write"]
     assert [e["result"] for e in writes] == ["applied", "applied"]
@@ -215,7 +223,7 @@ def test_environment_default_value_update_and_revert(live, tmp_path):
     update = [_op("update_feature_state", changed, segment=None, feature=feature, live=live)]
     applied = False
     try:
-        result = executor.execute(_approve(update, secret), update, start_fp)
+        result = _run(executor, update, secret, start_fp)
         applied = True
         assert result.status == "applied" and result.after_settled
     finally:
@@ -223,5 +231,5 @@ def test_environment_default_value_update_and_revert(live, tmp_path):
             current = _settled(live, lambda v: value(v) == changed)
             revert = [_op("update_feature_state", original, segment=None, feature=feature,
                           live=live)]
-            executor.execute(_approve(revert, secret), revert, current)
+            _run(executor, revert, secret, current)
     assert _settled(live, lambda v: value(v) == original) == start_fp

@@ -30,6 +30,8 @@ from contracts.models import Approval, WriteOp
 from gate.scope import GateScope
 
 MAX_APPROVAL_LIFETIME = timedelta(minutes=15)
+# The edge document lags a write by seconds (seen Nov 26); refuse the replaced state this long.
+WRITTEN_OVER_WINDOW = timedelta(minutes=2)
 
 
 class Refusal(StrEnum):
@@ -138,10 +140,15 @@ class ApprovalStore:
                                (environment, fingerprint, self._clock().isoformat()))
 
     def was_written_over(self, environment: str, fingerprint: str) -> bool:
+        """True if the gate's last write here started from `fingerprint`, within the edge-lag
+        window. After that, an identical fingerprint is a real state again (e.g. a revert)."""
         with self._lock:
-            row = self._conn.execute("SELECT fingerprint FROM written_over WHERE environment = ?",
-                                     (environment,)).fetchone()
-        return row is not None and row[0] == fingerprint
+            row = self._conn.execute(
+                "SELECT fingerprint, at FROM written_over WHERE environment = ?",
+                (environment,)).fetchone()
+        if row is None or row[0] != fingerprint:
+            return False
+        return self._clock() - datetime.fromisoformat(row[1]) < WRITTEN_OVER_WINDOW
 
     def is_used(self, approval_id: str) -> bool:
         with self._lock:
