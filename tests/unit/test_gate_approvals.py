@@ -60,7 +60,7 @@ def test_valid_approval_is_accepted_once(store):
     ops = _ops()
     record = store.consume(_approval(ops), ops)
     assert record.approval_id == "appr_1"
-    assert record.approver == "naman"
+    assert record.approver_claimed == "naman"  # not signed yet: stored as a claim
     assert record.used_at == NOW
     assert store.is_used("appr_1")
 
@@ -185,3 +185,35 @@ def test_refusal_messages_do_not_include_the_secret(store):
     with pytest.raises(ApprovalRefused) as err:
         store.consume(_approval(ops, secret="attacker-secret"), ops)
     assert SECRET not in str(err.value)
+
+
+def test_second_approval_for_the_same_proposal_is_refused(store):
+    ops = _ops()
+    store.consume(_approval(ops, approval_id="appr_1"), ops)
+    assert _refusal(store, _approval(ops, approval_id="appr_2"), ops) is Refusal.REUSED
+
+
+def test_register_and_read_back_a_proposal(store):
+    store.register_proposal("prop_1", "h" * 64, "f" * 64, "Development")
+    reg = store.registration("prop_1")
+    assert (reg.payload_hash, reg.fingerprint, reg.environment) == ("h" * 64, "f" * 64,
+                                                                     "Development")
+    assert store.registration("prop_2") is None
+
+
+def test_registration_is_immutable(store):
+    store.register_proposal("prop_1", "h" * 64, "f" * 64, "Development")
+    store.register_proposal("prop_1", "h" * 64, "f" * 64, "Development")  # same: fine
+    with pytest.raises(ValueError, match="already registered"):
+        store.register_proposal("prop_1", "x" * 64, "f" * 64, "Development")
+
+
+def test_written_over_fingerprint_is_remembered_per_environment(tmp_path, clock):
+    path = tmp_path / "a.db"
+    s1 = ApprovalStore(path, secret=SECRET, scope=SCOPE, clock=clock)
+    s1.mark_written_over("Development", "f" * 64)
+    s2 = ApprovalStore(path, secret=SECRET, scope=SCOPE, clock=clock)
+    assert s2.was_written_over("Development", "f" * 64)
+    assert not s2.was_written_over("Demo Production", "f" * 64)
+    s2.mark_written_over("Development", "g" * 64)  # only the last one counts
+    assert not s2.was_written_over("Development", "f" * 64)

@@ -6,27 +6,37 @@ The only process that holds the Flagsmith organisation key. Endpoints:
                           200 applied, 403 refused (reason), 409 stale, 502 write failed.
 - GET  /gate/fingerprint  ?environment=NAME: canonical fingerprint of the edge document.
 - POST /gate/render       {ops, proposal_id}: the exact MCP call(s) a write would send.
+- POST /gate/register     {ops, proposal_id}: record the proposal's payload hash and the gate's
+                          OWN settled fingerprint. /gate/write compares against this record,
+                          never against a fingerprint the caller sends.
+- GET  /gate/audit        the gate's audit trail (not itself logged, so UI polling doesn't
+                          flood the log)
 - GET  /health
 
 Configuration comes only from the gate's environment (compose passes .env.gate):
 FLAGSMITH_API_KEY, APPROVAL_SIGNING_SECRET, GATE_PROJECT_ID, GATE_PROJECT_NAME,
 GATE_ENVIRONMENTS ("Development:121197,Demo Production:121198"),
 GATE_SERVER_KEY_<ENV> (a ser. key per environment, e.g. GATE_SERVER_KEY_DEMO_PRODUCTION),
-optional FLAGSMITH_MCP_URL, GATE_DB_PATH, GATE_AUDIT_PATH. Without them the service still
+optional FLAGSMITH_MCP_URL, GATE_DB_PATH, GATE_AUDIT_PATH, and GATE_SHARED_TOKEN: when set,
+every /gate/* call needs "Authorization: Bearer <token>" (off by default until the API sends
+it). Without the required settings the service still
 starts (so `docker compose up` works) and answers 503.
 """
 
 from __future__ import annotations
 
+import hmac
 import os
 import re
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel, Field
 
+from contracts.hashing import payload_hash
 from contracts.models import Approval, WriteOp
 from gate.allowlist import ReadKind, ToolDenied, check_read
 from gate.approvals import ApprovalRefused, ApprovalStore
@@ -91,8 +101,9 @@ class GateDeps:
     audit: AuditLog
     fingerprint: Callable[[str], str]
     document: Callable[[str], dict[str, Any]]
-    settle_reads: int = 15  # after a write, read the edge document up to this many times
-    settle_interval_s: float = 2.0
+    settle_reads: int = 8  # after a write, read the edge document up to this many times
+    settle_interval_s: float = 1.0
+    sleep: Callable[[float], None] = time.sleep
 
     @classmethod
     def from_settings(cls, s: GateSettings) -> GateDeps:
@@ -119,7 +130,8 @@ class ReadRequest(BaseModel):
 class WriteRequest(BaseModel):
     approval: Approval
     ops: list[WriteOp]
-    fingerprint: str
+    # Only has to agree with the gate's registration; it is never the reference.
+    fingerprint: str | None = None
 
 
 class RenderRequest(BaseModel):
@@ -134,12 +146,33 @@ def _environment_name(scope: GateScope, value: Any) -> str:
     raise ToolDenied(f"environment {value!r} is outside the gate's scope")
 
 
-def create_app(deps: GateDeps | None = None, settings: GateSettings | None = None) -> FastAPI:
-    app = FastAPI(title="TrustGate gate", version="0.1.0")
+def _settled(d: GateDeps, environment: str, attempts: int = 6) -> str:
+    """Two equal reads in a row: the edge document lags writes by a few seconds."""
+    previous = None
+    for attempt in range(attempts):
+        current = d.fingerprint(environment)
+        if current == previous:
+            return current
+        previous = current
+        if attempt + 1 < attempts:
+            d.sleep(1.0)
+    raise FingerprintError(f"{environment} did not settle; try again shortly")
+
+
+def create_app(deps: GateDeps | None = None, settings: GateSettings | None = None,
+               shared_token: str | None = None) -> FastAPI:
     if deps is None:
         settings = settings or GateSettings.from_env()
         if settings.configured:
             deps = GateDeps.from_settings(settings)
+    token = shared_token if shared_token is not None else os.environ.get("GATE_SHARED_TOKEN", "")
+
+    def authorised(authorization: str = Header(default="")) -> None:
+        if token and not hmac.compare_digest(authorization.encode(),
+                                             f"Bearer {token}".encode()):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "gate token required")
+
+    app = FastAPI(title="TrustGate gate", version="0.1.0")
     app.state.deps = deps
 
     def need() -> GateDeps:
@@ -153,7 +186,7 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
     def health() -> dict[str, str]:
         return {"status": "ok", "mode": "live" if app.state.deps else "unconfigured"}
 
-    @app.post("/gate/read")
+    @app.post("/gate/read", dependencies=[Depends(authorised)])
     def read(req: ReadRequest) -> dict[str, Any]:
         d = need()
         try:
@@ -188,12 +221,13 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
                        result=outcome)
         return {"tool": req.tool, "is_error": outcome == "error", "result": body}
 
-    @app.post("/gate/write")
+    @app.post("/gate/write", dependencies=[Depends(authorised)])
     def write(req: WriteRequest) -> dict[str, Any]:
         d = need()
         executor = Executor(approvals=d.approvals, scope=d.scope, ids=d.ids, mcp=d.mcp,
                             fingerprint=d.fingerprint, audit=d.audit,
-                            settle_reads=d.settle_reads, settle_interval_s=d.settle_interval_s)
+                            settle_reads=d.settle_reads, settle_interval_s=d.settle_interval_s,
+                            sleep=d.sleep)
         try:
             return executor.execute(req.approval, req.ops, req.fingerprint).to_dict()
         except ApprovalRefused as exc:
@@ -204,7 +238,7 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
         except WriteFailed as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, exc.result.to_dict()) from None
 
-    @app.get("/gate/fingerprint")
+    @app.get("/gate/fingerprint", dependencies=[Depends(authorised)])
     def fingerprint(environment: str) -> dict[str, str]:
         d = need()
         try:
@@ -215,7 +249,7 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
         except FingerprintError as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from None
 
-    @app.post("/gate/render")
+    @app.post("/gate/render", dependencies=[Depends(authorised)])
     def render_calls(req: RenderRequest) -> dict[str, Any]:
         d = need()
         try:
@@ -224,6 +258,33 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
         except WriterError as exc:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
         return {"calls": [c.to_dict() for c in calls]}
+
+    @app.post("/gate/register", dependencies=[Depends(authorised)])
+    def register(req: RenderRequest) -> dict[str, Any]:
+        d = need()
+        try:
+            calls = render(req.ops, d.scope, d.ids, proposal_id=req.proposal_id,
+                           approval_id="<pending>")
+            environment = req.ops[0].environment
+            fingerprint = _settled(d, environment)
+            ph = payload_hash(req.ops)
+            d.approvals.register_proposal(req.proposal_id, ph, fingerprint, environment)
+        except (WriterError, McpError, KeyError, TypeError) as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+        except FingerprintError as exc:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from None
+        except ValueError as exc:  # already registered with a different payload
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+        d.audit.append(actor="orchestrator", action="read", tool="register_proposal",
+                       args={"environment": environment}, result="registered",
+                       proposal_id=req.proposal_id, payload_hash=ph, fingerprint=fingerprint)
+        return {"proposal_id": req.proposal_id, "payload_hash": ph, "fingerprint": fingerprint,
+                "calls": [c.to_dict() for c in calls]}
+
+    @app.get("/gate/audit", dependencies=[Depends(authorised)])
+    def audit(proposal_id: str | None = None) -> dict[str, Any]:
+        # Deliberately not audited itself: the UI polls this every couple of seconds.
+        return {"gate": need().audit.entries(proposal_id=proposal_id)}
 
     return app
 

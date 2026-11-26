@@ -15,6 +15,8 @@ fingerprint and the verifier's read-back catch an unexpected difference.
 
 from __future__ import annotations
 
+import hmac
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -23,8 +25,18 @@ from typing import Any
 from contracts.models import Approval, WriteOp
 from gate.approvals import ApprovalRefused, ApprovalStore, Refusal
 from gate.audit_log import AuditLog
+from gate.mcp_client import McpError
 from gate.scope import GateScope
 from gate.writer import IdResolver, McpCall, WriterError, WriteResult, render, send
+
+_ENV_LOCKS: dict[str, threading.Lock] = {}
+_ENV_LOCKS_GUARD = threading.Lock()
+
+
+def _environment_lock(environment: str) -> threading.Lock:
+    """One write at a time per environment, from the stale check to the settled fingerprint."""
+    with _ENV_LOCKS_GUARD:
+        return _ENV_LOCKS.setdefault(environment, threading.Lock())
 
 
 class StaleState(Exception):
@@ -65,14 +77,16 @@ class WriteFailed(Exception):
 
 class Executor:
     def __init__(self, *, approvals: ApprovalStore, scope: GateScope, ids: IdResolver, mcp: Any,
-                 fingerprint: Callable[[str], str], audit: AuditLog, settle_reads: int = 15,
-                 settle_interval_s: float = 2.0, sleep: Callable[[float], None] = time.sleep):
+                 fingerprint: Callable[[str], str], audit: AuditLog, settle_reads: int = 8,
+                 settle_interval_s: float = 1.0, sleep: Callable[[float], None] = time.sleep):
         self._approvals = approvals
         self._scope = scope
         self._ids = ids
         self._mcp = mcp
         self._fingerprint = fingerprint
         self._audit = audit
+        # 8 x 1 s keeps a write's response well inside the API's 30 s timeout; the verifier
+        # does the longer read-back afterwards.
         self._settle_reads = settle_reads
         self._settle_interval_s = settle_interval_s
         self._sleep = sleep
@@ -94,44 +108,87 @@ class Executor:
     def _refuse(self, approval: Approval, reason: str) -> None:
         self._audit.append(actor="executor", action="refused", tool=None, args={},
                            result=reason, proposal_id=approval.proposal_id,
-                           approval_id=approval.approval_id, approver=approval.approver)
+                           approval_id=approval.approval_id, approver_claimed=approval.approver,
+                           approver_verified=False)
+
+    def _refused(self, approval: Approval, reason: Refusal, detail: str) -> ApprovalRefused:
+        self._refuse(approval, f"{reason}: {detail}")
+        return ApprovalRefused(reason, detail)
 
     def execute(self, approval: Approval, ops: Sequence[WriteOp],
-                approved_fingerprint: str) -> ExecutionResult:
+                request_fingerprint: str | None = None) -> ExecutionResult:
+        """Run one approved write. The stale check compares against the fingerprint the gate
+        itself recorded when the proposal was registered; the request's copy only has to agree."""
         try:
             self._approvals.check(approval, ops)
         except ApprovalRefused as exc:
             self._refuse(approval, str(exc))
             raise
 
+        reg = self._approvals.registration(approval.proposal_id)
+        if reg is None:
+            raise self._refused(approval, Refusal.BAD_REQUEST,
+                                "proposal was not registered with the gate")
+        if not hmac.compare_digest(reg.payload_hash, approval.payload_hash):
+            raise self._refused(approval, Refusal.PAYLOAD_MISMATCH,
+                                "approved payload differs from the registered proposal")
+        environment = ops[0].environment
+        if reg.environment != environment:
+            raise self._refused(approval, Refusal.OUT_OF_SCOPE,
+                                f"proposal was registered for {reg.environment}")
+        if request_fingerprint is not None and request_fingerprint != reg.fingerprint:
+            raise self._refused(approval, Refusal.BAD_REQUEST,
+                                "request fingerprint differs from the registered one")
+
         try:
             calls = render(ops, self._scope, self._ids, proposal_id=approval.proposal_id,
                            approval_id=approval.approval_id)
-        except WriterError as exc:
-            self._refuse(approval, f"bad_request: {exc}")
-            raise ApprovalRefused(Refusal.BAD_REQUEST, str(exc)) from None
+        except (WriterError, McpError, KeyError, ValueError, TypeError) as exc:
+            raise self._refused(approval, Refusal.BAD_REQUEST,
+                                f"could not render the write: {type(exc).__name__}: {exc}") \
+                from None
 
-        environment = ops[0].environment
-        try:
-            before = self._fingerprint(environment)
-        except Exception as exc:  # noqa: BLE001
-            self._refuse(approval, f"stale: could not fingerprint {environment}")
-            raise StaleState(f"could not fingerprint {environment}: "
-                             f"{type(exc).__name__}") from None
-        if before != approved_fingerprint:
-            self._refuse(approval, "stale: Flagsmith changed since the proposal")
-            raise StaleState("Flagsmith changed since the proposal")
+        with _environment_lock(environment):
+            if self._approvals.was_written_over(environment, reg.fingerprint):
+                self._refuse(approval, "stale: the gate already wrote over this state")
+                raise StaleState("Flagsmith was written since the proposal")
+            try:
+                before = self._fingerprint(environment)
+            except Exception as exc:  # noqa: BLE001
+                self._refuse(approval, f"stale: could not fingerprint {environment}")
+                raise StaleState(f"could not fingerprint {environment}: "
+                                 f"{type(exc).__name__}") from None
+            if before != reg.fingerprint:
+                self._refuse(approval, "stale: Flagsmith changed since the proposal")
+                raise StaleState("Flagsmith changed since the proposal")
 
-        try:
-            used = self._approvals.consume(approval, ops)
-        except ApprovalRefused as exc:
-            self._refuse(approval, str(exc))
-            raise
+            # A dead MCP session must fail here, before the approval is used up.
+            ensure_session = getattr(self._mcp, "ensure_session", None)
+            if ensure_session is not None:
+                try:
+                    ensure_session()
+                except McpError as exc:
+                    self._refuse(approval, f"failed: MCP session unavailable: {exc}")
+                    failed = ExecutionResult(approval.proposal_id, approval.approval_id,
+                                             "failed", calls,
+                                             [WriteResult(calls[0], ok=False,
+                                                          detail=f"MCP session: {exc}")], before)
+                    raise WriteFailed(failed) from None
 
-        results = send(calls, self._mcp)
-        ok = bool(results) and all(r.ok for r in results) and len(results) == len(calls)
-        # Only wait for the edge to move if something was written.
-        after, settled = self._after_fingerprint(environment, before) if ok else (None, False)
+            try:
+                used = self._approvals.consume(approval, ops)
+            except ApprovalRefused as exc:
+                self._refuse(approval, str(exc))
+                raise
+
+            results = send(calls, self._mcp)
+            ok = bool(results) and all(r.ok for r in results) and len(results) == len(calls)
+            wrote = any(r.ok for r in results)
+            if wrote:
+                self._approvals.mark_written_over(environment, before)
+            after, settled = self._after_fingerprint(environment, before) if wrote \
+                else (None, False)
+
         result = ExecutionResult(approval.proposal_id, approval.approval_id,
                                  "applied" if ok else "failed", calls, results, before, after,
                                  settled)
@@ -141,9 +198,9 @@ class Executor:
             args={"calls": [c.to_dict() for c in calls]},
             result="applied" if ok else f"failed: {failure}"[:500],
             proposal_id=approval.proposal_id, approval_id=approval.approval_id,
-            approver=used.approver, payload_hash=used.payload_hash,
-            fingerprint_before=before, fingerprint_after=after, after_settled=settled,
-            version_uuids=result.version_uuids)
+            approver_claimed=used.approver_claimed, approver_verified=False,
+            payload_hash=used.payload_hash, fingerprint_before=before, fingerprint_after=after,
+            after_settled=settled, version_uuids=result.version_uuids)
         if not ok:
             raise WriteFailed(result)
         return result

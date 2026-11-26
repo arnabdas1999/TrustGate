@@ -43,13 +43,21 @@ def setup(tmp_path):
         approvals=ApprovalStore(tmp_path / "a.db", secret=SECRET, scope=SCOPE),
         audit=AuditLog(tmp_path / "audit.jsonl"),
         fingerprint=lambda env: fps["value"],
-        document=lambda env: DOC, settle_reads=1)
+        document=lambda env: DOC, settle_reads=1, sleep=lambda s: None)
     return TestClient(create_app(deps)), mcp, fps, deps
 
 
 def _ops():
     return [WriteOp(tool="create_segment_override", project="OpsPilot", environment="Development",
                     feature="agent_prompt_version", segment="tier0_production", value="v1_strict")]
+
+
+def _register(client, ops=None, proposal_id="prop_1"):
+    r = client.post("/gate/register", json={"proposal_id": proposal_id,
+                                            "ops": [o.model_dump(mode="json")
+                                                    for o in (ops or _ops())]})
+    assert r.status_code == 200, r.text
+    return r.json()
 
 
 def _write_body(ops=None, secret=SECRET, fingerprint=FP):
@@ -111,6 +119,7 @@ def test_environment_document_read_hides_keys(setup):
 
 def test_audit_log_read_merges_versions(setup):
     client = setup[0]
+    _register(client)
     client.post("/gate/write", json=_write_body())
     r = client.post("/gate/read", json={"tool": "get_audit_log", "args": {
         "environment": "Development", "features": ["agent_prompt_version"]}})
@@ -122,6 +131,7 @@ def test_audit_log_read_merges_versions(setup):
 
 def test_write_with_valid_approval(setup):
     client, mcp, _, _ = setup
+    _register(client)
     r = client.post("/gate/write", json=_write_body())
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "applied"
@@ -131,21 +141,24 @@ def test_write_with_valid_approval(setup):
 
 def test_forged_write_is_403(setup):
     client, mcp, _, _ = setup
+    _register(client)
     r = client.post("/gate/write", json=_write_body(secret="nope"))
     assert r.status_code == 403 and r.json()["detail"]["reason"] == "forged"
     assert not [c for c in mcp.calls if c[2]]
 
 
-def test_reused_write_is_403(setup):
+def test_reused_write_is_refused(setup):
     client = setup[0]
+    _register(client)
     body = _write_body()
     assert client.post("/gate/write", json=body).status_code == 200
     r = client.post("/gate/write", json=body)
-    assert r.status_code == 403 and r.json()["detail"]["reason"] == "reused"
+    assert r.status_code in (403, 409)  # written-over (STALE) or REUSED: never a second write
 
 
 def test_stale_write_is_409(setup):
     client, mcp, fps, _ = setup
+    _register(client)
     fps["value"] = "0" * 64
     r = client.post("/gate/write", json=_write_body())
     assert r.status_code == 409
@@ -186,3 +199,62 @@ def test_settings_missing_values_are_named():
     s = GateSettings.from_env({"GATE_PROJECT_ID": "56664"})
     assert not s.configured
     assert "FLAGSMITH_API_KEY" in s.missing and "APPROVAL_SIGNING_SECRET" in s.missing
+
+
+def test_register_records_the_gates_own_fingerprint(setup):
+    client, _, fps, deps = setup
+    body = _register(client)
+    assert body["fingerprint"] == FP and body["calls"][0]["tool"] == V2_WRITE_TOOL
+    assert deps.approvals.registration("prop_1").fingerprint == FP
+
+
+def test_register_conflict_is_409(setup):
+    client = setup[0]
+    _register(client)
+    other = [WriteOp(tool="create_segment_override", project="OpsPilot",
+                     environment="Development", feature="agent_prompt_version",
+                     segment="tier0_production", value="v2_fast")]
+    r = client.post("/gate/register", json={"proposal_id": "prop_1",
+                                            "ops": [o.model_dump(mode="json") for o in other]})
+    assert r.status_code == 409
+
+
+def test_write_without_registration_is_refused(setup):
+    client, mcp, _, _ = setup
+    r = client.post("/gate/write", json=_write_body())
+    assert r.status_code == 403 and r.json()["detail"]["reason"] == "bad_request"
+    assert not [c for c in mcp.calls if c[2]]
+
+
+def test_caller_cannot_skip_the_stale_check_with_the_current_fingerprint(setup):
+    client, mcp, fps, _ = setup
+    _register(client)
+    fps["value"] = "0" * 64  # Flagsmith changed; the caller sends the new state
+    r = client.post("/gate/write", json=_write_body(fingerprint="0" * 64))
+    assert r.status_code in (403, 409)
+    assert not [c for c in mcp.calls if c[2]]
+
+
+def test_gate_audit_endpoint_does_not_log_itself(setup):
+    client, _, _, deps = setup
+    client.post("/gate/read", json={"tool": "list_project_features",
+                                    "args": {"project_pk": 56664}})
+    before = len(deps.audit.entries())
+    for _ in range(3):
+        r = client.get("/gate/audit")
+        assert r.status_code == 200 and len(r.json()["gate"]) == before
+    assert len(deps.audit.entries()) == before
+
+
+def test_shared_token_guards_every_gate_endpoint(tmp_path):
+    deps = GateDeps(scope=SCOPE, mcp=FakeMcp(), ids=IDS,
+                    approvals=ApprovalStore(tmp_path / "a.db", secret=SECRET, scope=SCOPE),
+                    audit=AuditLog(tmp_path / "audit.jsonl"), fingerprint=lambda env: FP,
+                    document=lambda env: DOC, settle_reads=1, sleep=lambda s: None)
+    client = TestClient(create_app(deps, shared_token="s3cret-token"))
+    assert client.get("/health").status_code == 200
+    assert client.get("/gate/audit").status_code == 401
+    assert client.get("/gate/audit", headers={"Authorization": "Bearer wrong"}).status_code \
+        == 401
+    assert client.get("/gate/audit",
+                      headers={"Authorization": "Bearer s3cret-token"}).status_code == 200

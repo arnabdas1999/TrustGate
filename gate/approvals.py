@@ -53,9 +53,20 @@ class ApprovalRefused(Exception):
 class UsedApproval:
     approval_id: str
     proposal_id: str
-    approver: str
+    # The approver isn't covered by the API's signature yet (contracts fix pending), so the
+    # gate records it as a claim, never as verified identity.
+    approver_claimed: str
     payload_hash: str
     used_at: datetime
+
+
+@dataclass(frozen=True)
+class Registration:
+    """What the gate itself recorded when the proposal was registered (POST /gate/register)."""
+    proposal_id: str
+    payload_hash: str
+    fingerprint: str
+    environment: str
 
 
 def _signature_valid(secret: str, approval: Approval) -> bool:
@@ -82,14 +93,59 @@ class ApprovalStore:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         with self._conn:
+            # One approval per approval_id AND per proposal: a proposal is written at most once.
             self._conn.execute(
-                "CREATE TABLE IF NOT EXISTS used_approvals ("
-                " approval_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL,"
-                " approver TEXT NOT NULL, payload_hash TEXT NOT NULL, used_at TEXT NOT NULL)")
+                "CREATE TABLE IF NOT EXISTS used_approvals_v2 ("
+                " approval_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL UNIQUE,"
+                " approver_claimed TEXT NOT NULL, approver_verified INTEGER NOT NULL DEFAULT 0,"
+                " payload_hash TEXT NOT NULL, used_at TEXT NOT NULL)")
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS registered_proposals ("
+                " proposal_id TEXT PRIMARY KEY, payload_hash TEXT NOT NULL,"
+                " fingerprint TEXT NOT NULL, environment TEXT NOT NULL, registered_at TEXT)")
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS written_over ("
+                " environment TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, at TEXT NOT NULL)")
+
+    # -- proposals registered by the gate itself ---------------------------------------------
+
+    def register_proposal(self, proposal_id: str, payload_hash: str, fingerprint: str,
+                          environment: str) -> Registration:
+        reg = Registration(proposal_id, payload_hash, fingerprint, environment)
+        existing = self.registration(proposal_id)
+        if existing is not None:
+            if existing != reg:
+                raise ValueError(f"proposal {proposal_id} is already registered differently")
+            return existing
+        with self._lock, self._conn:
+            self._conn.execute("INSERT INTO registered_proposals VALUES (?, ?, ?, ?, ?)",
+                               (proposal_id, payload_hash, fingerprint, environment,
+                                self._clock().isoformat()))
+        return reg
+
+    def registration(self, proposal_id: str) -> Registration | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT proposal_id, payload_hash, fingerprint, environment "
+                "FROM registered_proposals WHERE proposal_id = ?", (proposal_id,)).fetchone()
+        return Registration(*row) if row else None
+
+    # -- the state the last write replaced, per environment ----------------------------------
+
+    def mark_written_over(self, environment: str, fingerprint: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("INSERT OR REPLACE INTO written_over VALUES (?, ?, ?)",
+                               (environment, fingerprint, self._clock().isoformat()))
+
+    def was_written_over(self, environment: str, fingerprint: str) -> bool:
+        with self._lock:
+            row = self._conn.execute("SELECT fingerprint FROM written_over WHERE environment = ?",
+                                     (environment,)).fetchone()
+        return row is not None and row[0] == fingerprint
 
     def is_used(self, approval_id: str) -> bool:
         with self._lock:
-            row = self._conn.execute("SELECT 1 FROM used_approvals WHERE approval_id = ?",
+            row = self._conn.execute("SELECT 1 FROM used_approvals_v2 WHERE approval_id = ?",
                                      (approval_id,)).fetchone()
         return row is not None
 
@@ -128,10 +184,10 @@ class ApprovalStore:
         try:
             with self._lock, self._conn:
                 self._conn.execute(
-                    "INSERT INTO used_approvals VALUES (?, ?, ?, ?, ?)",
-                    (record.approval_id, record.proposal_id, record.approver,
+                    "INSERT INTO used_approvals_v2 VALUES (?, ?, ?, 0, ?, ?)",
+                    (record.approval_id, record.proposal_id, record.approver_claimed,
                      record.payload_hash, record.used_at.isoformat()))
         except sqlite3.IntegrityError:
-            raise ApprovalRefused(Refusal.REUSED,
-                                  f"approval {approval.approval_id} was already used") from None
+            raise ApprovalRefused(Refusal.REUSED, f"approval {approval.approval_id} or proposal "
+                                  f"{approval.proposal_id} was already used") from None
         return record
