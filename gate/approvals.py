@@ -1,0 +1,136 @@
+"""Approval checks the gate runs before any Flagsmith write.
+
+An approval is accepted once, and only if all of these hold:
+1. It is well formed: at least one op, a timezone-aware expiry.
+2. The HMAC from the API verifies (contracts.hashing). Checked in `_signature_valid` only.
+3. It has not expired by the gate's own clock, and its expiry is no more than 15 minutes
+   ahead of that clock (a long-lived approval is refused even if signed).
+4. The payload hash the gate recomputes from the ops it received equals the signed one.
+5. Every op stays in the gate's scope: our project and an allowlisted environment.
+6. Its approval_id has never been used. The gate keeps its own SQLite table with a unique
+   approval_id and never trusts `used_at` from the request. Marking it used is the last step
+   and happens atomically, so a refused request does not burn a genuine approval.
+
+The stale-state (fingerprint) check is the executor's job, right before the write.
+"""
+
+from __future__ import annotations
+
+import hmac
+import sqlite3
+import threading
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+from pathlib import Path
+
+from contracts.hashing import payload_hash, verify_signature
+from contracts.models import Approval, WriteOp
+from gate.scope import GateScope
+
+MAX_APPROVAL_LIFETIME = timedelta(minutes=15)
+
+
+class Refusal(StrEnum):
+    BAD_REQUEST = "bad_request"
+    FORGED = "forged"
+    EXPIRED = "expired"
+    EXPIRY_TOO_FAR = "expiry_too_far"
+    PAYLOAD_MISMATCH = "payload_mismatch"
+    OUT_OF_SCOPE = "out_of_scope"
+    REUSED = "reused"
+
+
+class ApprovalRefused(Exception):
+    def __init__(self, reason: Refusal, detail: str):
+        super().__init__(f"{reason}: {detail}")
+        self.reason = reason
+        self.detail = detail
+
+
+@dataclass(frozen=True)
+class UsedApproval:
+    approval_id: str
+    proposal_id: str
+    approver: str
+    payload_hash: str
+    used_at: datetime
+
+
+def _signature_valid(secret: str, approval: Approval) -> bool:
+    """The one place the gate checks the API's HMAC.
+
+    contracts.hashing currently signs `expires_at.isoformat()` of a UTC datetime ("+00:00"),
+    while the JSON wire format says "Z". So we format the parsed datetime the way the API
+    signed it. When contracts.hashing takes a datetime itself, pass approval.expires_at here.
+    """
+    expires = approval.expires_at.astimezone(UTC).isoformat()
+    return verify_signature(secret, approval.signature, approval.approval_id,
+                            approval.proposal_id, approval.payload_hash, expires)
+
+
+class ApprovalStore:
+    def __init__(self, db_path: str | Path, *, secret: str, scope: GateScope,
+                 clock: Callable[[], datetime] = lambda: datetime.now(UTC)):
+        if not secret:
+            raise ValueError("APPROVAL_SIGNING_SECRET is not set")
+        self._secret = secret
+        self._scope = scope
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        with self._conn:
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS used_approvals ("
+                " approval_id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL,"
+                " approver TEXT NOT NULL, payload_hash TEXT NOT NULL, used_at TEXT NOT NULL)")
+
+    def is_used(self, approval_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute("SELECT 1 FROM used_approvals WHERE approval_id = ?",
+                                     (approval_id,)).fetchone()
+        return row is not None
+
+    def check(self, approval: Approval, ops: Sequence[WriteOp]) -> None:
+        """Every rule except single use. Raises ApprovalRefused."""
+        if not ops:
+            raise ApprovalRefused(Refusal.BAD_REQUEST, "no ops to write")
+        if approval.expires_at.tzinfo is None:
+            raise ApprovalRefused(Refusal.BAD_REQUEST, "expires_at has no timezone")
+
+        if not _signature_valid(self._secret, approval):
+            raise ApprovalRefused(Refusal.FORGED, "signature does not verify")
+
+        now = self._clock()
+        if now >= approval.expires_at:
+            raise ApprovalRefused(Refusal.EXPIRED, f"expired at {approval.expires_at.isoformat()}")
+        if approval.expires_at > now + MAX_APPROVAL_LIFETIME:
+            raise ApprovalRefused(Refusal.EXPIRY_TOO_FAR,
+                                  "expiry is more than 15 minutes ahead of the gate's clock")
+
+        if not hmac.compare_digest(payload_hash(ops), approval.payload_hash):
+            raise ApprovalRefused(Refusal.PAYLOAD_MISMATCH,
+                                  "ops differ from the approved payload")
+
+        for op in ops:
+            if not self._scope.allows_project(op.project):
+                raise ApprovalRefused(Refusal.OUT_OF_SCOPE, f"project {op.project!r}")
+            if op.environment not in self._scope.environments:
+                raise ApprovalRefused(Refusal.OUT_OF_SCOPE, f"environment {op.environment!r}")
+
+    def consume(self, approval: Approval, ops: Sequence[WriteOp]) -> UsedApproval:
+        """Check everything, then mark the approval used. Call right before the write."""
+        self.check(approval, ops)
+        record = UsedApproval(approval.approval_id, approval.proposal_id, approval.approver,
+                              approval.payload_hash, self._clock())
+        try:
+            with self._lock, self._conn:
+                self._conn.execute(
+                    "INSERT INTO used_approvals VALUES (?, ?, ?, ?, ?)",
+                    (record.approval_id, record.proposal_id, record.approver,
+                     record.payload_hash, record.used_at.isoformat()))
+        except sqlite3.IntegrityError:
+            raise ApprovalRefused(Refusal.REUSED,
+                                  f"approval {approval.approval_id} was already used") from None
+        return record
