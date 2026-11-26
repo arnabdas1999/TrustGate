@@ -248,6 +248,37 @@ tr.chosen td {
   align-items: baseline;
 }
 
+.banner {
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  margin: 0 0 16px;
+}
+
+.banner-good {
+  color: var(--good);
+  background: var(--good-bg);
+}
+
+.banner-warn {
+  color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.banner-bad {
+  color: var(--bad);
+  background: var(--bad-bg);
+}
+
+.banner-neutral {
+  color: var(--muted);
+  background: var(--neutral-bg);
+}
+
+.ops {
+  padding-left: 18px;
+  margin: 8px 0 0;
+}
+
 .evidence {
   background: var(--neutral-bg);
   border-radius: var(--radius);

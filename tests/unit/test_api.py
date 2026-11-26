@@ -34,6 +34,32 @@ def test_lists_and_gets_investigations(client):
     assert len(view["proposal"]["payload_hash"]) == 64
 
 
+def test_view_carries_the_gates_exact_calls(client):
+    view = client.get(f"/api/investigations/{DEMO_INV}").json()
+    assert view["rollback_of"] is None
+    (call,) = view["calls"]
+    assert call["tool"] == "create_environment_feature_version"
+    assert call["arguments"]["publish_immediately"] is True
+    assert call["arguments"]["feature_states_to_create"][0]["feature_state_value"] == {
+        "type": "unicode", "string_value": "v1_strict"}
+
+
+def test_rollback_view_names_the_repair_it_undoes(client):
+    view = client.get("/api/investigations/inv_opspilot_failed").json()
+    assert view["investigation"]["status"] == "failed"
+    assert view["rollback_of"] == "prop_opspilot_failed"
+    assert view["calls"][0]["arguments"]["segment_ids_to_delete_overrides"] == [1205876]
+
+
+def test_dict_repo_keeps_calls_on_the_api_store():
+    from api.store import Store
+    from orchestrator.repo import DictRepo
+
+    store = Store()
+    DictRepo(store).put_calls("prop_x", [{"tool": "t", "arguments": {}}])
+    assert store.proposal_calls == {"prop_x": [{"tool": "t", "arguments": {}}]}
+
+
 def test_unknown_investigation_is_404(client):
     assert client.get("/api/investigations/nope").status_code == 404
 

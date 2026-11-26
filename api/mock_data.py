@@ -70,6 +70,35 @@ def _by_flag(*flags: str) -> list[FlagChange]:
     return [c for c in RELEASE_CHANGES if c.flag in flags]
 
 
+def calls(proposals: dict[str, Proposal]) -> dict[str, list[dict]]:
+    """The exact MCP call(s) the gate would render for each proposal (shape of gate/writer.py:
+    one create_environment_feature_version per feature, published immediately)."""
+    feature_ids = {"agent_prompt_version": 306127, "agent_tool_policy": 306128}
+    segment_ids = {"tier0_production": 1205876, "high_value_wires": 1205877}
+    out: dict[str, list[dict]] = {}
+    for proposal in proposals.values():
+        rendered = []
+        for op in proposal.candidate.ops:
+            args: dict = {"environment_pk": 121198, "feature_pk": feature_ids.get(op.feature, 0),
+                          "publish_immediately": True,
+                          "description": f"trustgate proposal={proposal.id} approval=<on approve>"}
+            value = {"type": "unicode", "string_value": str(op.value)}
+            if op.tool == "create_segment_override":
+                args["feature_states_to_create"] = [{
+                    "feature": args["feature_pk"], "enabled": True,
+                    "feature_segment": {"segment": segment_ids.get(op.segment or "", 0)},
+                    "feature_state_value": value}]
+            elif op.tool == "update_feature_state":
+                args["feature_states_to_update"] = [{
+                    "feature": args["feature_pk"], "enabled": True, "feature_segment": None,
+                    "feature_state_value": value}]
+            else:
+                args["segment_ids_to_delete_overrides"] = [segment_ids.get(op.segment or "", 0)]
+            rendered.append({"tool": "create_environment_feature_version", "arguments": args})
+        out[proposal.id] = rendered
+    return out
+
+
 def build(now: datetime | None = None) -> tuple[dict[str, Investigation], dict[str, Proposal],
                                                 list[AuditEntry]]:
     now = now or datetime.now(UTC)
@@ -172,6 +201,32 @@ def build(now: datetime | None = None) -> tuple[dict[str, Investigation], dict[s
                    tool="list_organization_invites", result="not on the read allowlist"),
     ]
 
-    investigations = {ops_inv.id: ops_inv, vg_inv.id: vg_inv}
-    proposals = {ops_prop.id: ops_prop}
+    # --- OpsPilot: a repair whose read-back failed, now offering a rollback ------------------
+    failed_alert = now - timedelta(minutes=12)
+    rollback_ops = [WriteOp(tool="delete_feature_segment", project="opspilot",
+                            environment="demo-production", feature="agent_prompt_version",
+                            segment="tier0_production")]
+    failed_inv = Investigation(
+        id="inv_opspilot_failed", incident_id="inc_opspilot_failed", domain=Domain.OPSPILOT,
+        status=InvestigationStatus.FAILED, segment="tier0_production",
+        suspects=prompt, steps=steps[:2], culprit_set=prompt, candidates=candidates,
+        timestamps=Timestamps(alert=failed_alert,
+                              first_suspect=failed_alert + timedelta(seconds=51),
+                              proposal=failed_alert + timedelta(minutes=3),
+                              approved=failed_alert + timedelta(minutes=4)),
+        runs_used=82, usd_used=1.79, proposal_id="prop_opspilot_failed_rollback",
+    )
+    rollback_prop = Proposal(
+        id="prop_opspilot_failed_rollback", investigation_id=failed_inv.id,
+        candidate=candidates[0].model_copy(update={"ops": rollback_ops}),
+        payload_hash=payload_hash(rollback_ops), fingerprint="mock-fingerprint-0001",
+        explanation=("Rollback of prop_opspilot_failed: read-back did not confirm the repair "
+                     "(payments-prod still served v2_fast after 60 s). This undoes it; it needs "
+                     "its own approval."),
+        state=ProposalState.PROPOSED, created_at=now - timedelta(minutes=7),
+        expires_at=now + timedelta(minutes=8),
+    )
+
+    investigations = {ops_inv.id: ops_inv, vg_inv.id: vg_inv, failed_inv.id: failed_inv}
+    proposals = {ops_prop.id: ops_prop, rollback_prop.id: rollback_prop}
     return investigations, proposals, audit
