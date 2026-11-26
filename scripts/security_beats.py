@@ -104,7 +104,8 @@ class Beats:
         start = self.fingerprint()
         override = [self._op("create_segment_override", "agent_prompt_version", "v1_strict")]
         cleanup = [self._op("delete_feature_segment", "agent_prompt_version")]
-        applied = cleaned = False
+        applied = cleaned = stale_applied = False
+        stale_cleanup = [self._op("delete_feature_segment", "agent_tool_policy")]
         self.say(f"TrustGate security beats ({self.env}, starting state {start[:8]})")
         self.say("")
         try:
@@ -132,6 +133,9 @@ class Beats:
             cleaned = True
             self.say("[2] Meanwhile Flagsmith changes (another approved change lands)")
             r = self.write(self.approve(stale_pid, stale_ops))
+            if r.status_code == 200:  # should never happen; undo it in finally
+                stale_applied = True
+                raise BeatError("the stale proposal was written; the gate must refuse it")
             self.say(f"[2] B approved anyway -> {r.status_code} {self._why(r)}. Nothing written.")
             self.say("")
 
@@ -145,6 +149,9 @@ class Beats:
             if applied and not cleaned:  # never leave the override behind
                 clean_pid, _ = self.register(cleanup)
                 self.write(self.approve(clean_pid, cleanup))
+            if stale_applied:
+                clean_pid, _ = self.register(stale_cleanup)
+                self.write(self.approve(clean_pid, stale_cleanup))
         for _ in range(30):
             if self.fingerprint() == start:
                 break

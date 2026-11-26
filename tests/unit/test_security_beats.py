@@ -72,3 +72,19 @@ def test_beats_refuse_anything_but_development(tmp_path):
     beats = Beats(client, secret=SECRET, environment="Demo Production", project="OpsPilot",
                   out=out, sleep=lambda s: None)
     assert beats.run() == 2 and "Development only" in out.getvalue()
+
+
+def test_a_stale_write_that_lands_anyway_is_cleaned_up(tmp_path, monkeypatch):
+    """If the gate ever failed to refuse beat 2, the second override must not stay behind."""
+    import pytest
+
+    from scripts.security_beats import BeatError
+    flagsmith, client = _setup(tmp_path)
+    deps = client.app.state.deps
+    deps.fingerprint = lambda env: "c" * 64  # the gate can't see any change: no stale refusal
+    monkeypatch.setattr(ApprovalStore, "was_written_over", lambda self, env, fp: False)
+    beats = Beats(client, secret=SECRET, environment="Development", project="OpsPilot",
+                  out=io.StringIO(), sleep=lambda s: None)
+    with pytest.raises(BeatError, match="stale proposal was written"):
+        beats.run()
+    assert flagsmith.overrides == set()  # both overrides removed
