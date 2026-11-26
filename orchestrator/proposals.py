@@ -30,9 +30,13 @@ from contracts.models import (
     TestOutcome,
     WriteOp,
 )
+from orchestrator.gate_client import GateBusy
 from verifier.readback import Expectation
 
 PROPOSAL_TTL = timedelta(minutes=15)
+# /gate/register answers 503 while the edge still shows the state before a recent write.
+REGISTER_RETRY_S = 30.0
+REGISTER_RETRY_INTERVAL_S = 3.0
 NARROWEST_FIRST = [RepairKind.SEGMENT_OVERRIDE, RepairKind.SURGICAL, RepairKind.GLOBAL]
 
 
@@ -93,6 +97,7 @@ def build_proposal(investigation_id: str, candidate: RepairCandidate, ops: list[
                    gate: Any, *, environment: str, explanation: str,
                    now: datetime | None = None, proposal_id: str | None = None,
                    sleep: Callable[[float], None] = time.sleep,
+                   monotonic: Callable[[], float] = time.monotonic,
                    ) -> tuple[Proposal, list[dict[str, Any]]]:
     if not ops:
         raise ProposalError("no ops to propose")
@@ -100,7 +105,7 @@ def build_proposal(investigation_id: str, candidate: RepairCandidate, ops: list[
     proposal_id = proposal_id or f"prop_{secrets.token_hex(6)}"
     # The gate records the payload hash and takes its OWN settled fingerprint; /gate/write
     # checks against that record, so the proposal carries the gate's value.
-    registration = gate.register(ops, proposal_id)
+    registration = _register(gate, ops, proposal_id, sleep, monotonic)
     fingerprint, calls = registration["fingerprint"], registration["calls"]
     proposal = Proposal(id=proposal_id, investigation_id=investigation_id,
                         candidate=candidate.model_copy(update={"ops": ops}),
@@ -108,6 +113,22 @@ def build_proposal(investigation_id: str, candidate: RepairCandidate, ops: list[
                         explanation=explanation, state=ProposalState.PROPOSED,
                         created_at=now, expires_at=now + PROPOSAL_TTL)
     return proposal, calls
+
+
+def _register(gate: Any, ops: list[WriteOp], proposal_id: str,
+              sleep: Callable[[float], None], monotonic: Callable[[], float]) -> dict[str, Any]:
+    """Retry a 503 for about REGISTER_RETRY_S (bounded by attempts too, so a no-op sleep in
+    tests can't spin). Nothing is recorded on a 503, so registering again is safe."""
+    deadline = monotonic() + REGISTER_RETRY_S
+    attempts = int(REGISTER_RETRY_S / REGISTER_RETRY_INTERVAL_S) + 1
+    for attempt in range(attempts):
+        try:
+            return gate.register(ops, proposal_id)
+        except GateBusy:
+            if attempt + 1 >= attempts or monotonic() + REGISTER_RETRY_INTERVAL_S >= deadline:
+                raise
+            sleep(REGISTER_RETRY_INTERVAL_S)
+    raise AssertionError("unreachable")
 
 
 def expectations(ops: Sequence[WriteOp], member: Identity, control: Identity,

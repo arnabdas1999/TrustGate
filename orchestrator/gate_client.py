@@ -18,7 +18,14 @@ from contracts.models import AuditEntry, WriteOp
 
 
 class GateError(Exception):
-    pass
+    def __init__(self, message: str, *, status: int | None = None):
+        super().__init__(message)
+        self.status = status  # HTTP status, or None when the gate was unreachable
+
+
+class GateBusy(GateError):
+    """HTTP 503: the gate is up but can't answer yet (e.g. the edge hasn't settled after a
+    write). Worth retrying."""
 
 
 class GateClient:
@@ -34,7 +41,9 @@ class GateClient:
         except httpx.HTTPError as exc:
             raise GateError(f"gate unreachable: {type(exc).__name__}") from None
         if r.status_code >= 400:
-            raise GateError(f"gate {path} returned HTTP {r.status_code}: {r.text[:300]}")
+            kind = GateBusy if r.status_code == 503 else GateError
+            raise kind(f"gate {path} returned HTTP {r.status_code}: {r.text[:300]}",
+                       status=r.status_code)
         return r.json()
 
     def fingerprint(self, environment: str) -> str:

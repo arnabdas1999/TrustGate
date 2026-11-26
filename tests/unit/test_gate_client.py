@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from contracts.models import AuditEntry, WriteOp
-from orchestrator.gate_client import GateClient, GateError
+from orchestrator.gate_client import GateBusy, GateClient, GateError
 
 OPS = [WriteOp(tool="create_segment_override", project="56664", environment="Development",
                feature="agent_prompt_version", segment="tier0_production", value="v1_strict")]
@@ -81,9 +81,19 @@ def test_gate_errors_raise_with_status():
             .fingerprint("Development")
 
 
+def test_503_is_typed_busy_and_other_errors_are_not():
+    with pytest.raises(GateBusy) as busy:
+        _client(lambda r: httpx.Response(503, json={"detail": "settling"})).register(OPS, "p")
+    assert busy.value.status == 503
+    with pytest.raises(GateError) as other:
+        _client(lambda r: httpx.Response(422, json={"detail": "bad"})).register(OPS, "p")
+    assert other.value.status == 422 and not isinstance(other.value, GateBusy)
+
+
 def test_unreachable_gate_raises():
     def handler(request):
         raise httpx.ConnectError("down", request=request)
 
-    with pytest.raises(GateError, match="unreachable"):
+    with pytest.raises(GateError, match="unreachable") as exc:
         _client(handler).fingerprint("Development")
+    assert exc.value.status is None and not isinstance(exc.value, GateBusy)
