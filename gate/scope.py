@@ -16,7 +16,10 @@ class GateScope:
         return {str(i) for i in self.environments.values()}
 
     def allows_project(self, project: object) -> bool:
-        return str(project) in {str(self.project_id), self.project_name}
+        allowed = {str(self.project_id)}
+        if self.project_name.strip():  # a blank name must never match a blank project
+            allowed.add(self.project_name)
+        return str(project) in allowed
 
     def allows_environment(self, environment: object) -> bool:
         return str(environment) in self.environment_ids() | set(self.environments)

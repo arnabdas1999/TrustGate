@@ -4,6 +4,7 @@ from gate.allowlist import (
     GATE_NATIVE_READS,
     MCP_READS,
     MCP_WRITES,
+    REQUIRED_SCOPE_ARGS,
     ReadKind,
     ToolDenied,
     check_read,
@@ -13,15 +14,75 @@ from gate.scope import GateScope
 SCOPE = GateScope(project_id=56664, project_name="OpsPilot",
                   environments={"Development": 121197, "Demo Production": 121198})
 
+# The smallest valid arguments for each read: just its required scope argument, in scope.
+MINIMAL_ARGS = {
+    "list_project_features": {"project_pk": 56664},
+    "get_feature_flag": {"project_pk": 56664},
+    "list_project_segments": {"project_pk": 56664},
+    "get_project_segment": {"project_pk": 56664},
+    "list_project_environments": {"id": 56664},
+    "list_feature_segments": {"environment": 121197},
+    "get_environment_feature_versions": {"environment_pk": 121197},
+    "get_environment_feature_version_states": {"environment_pk": 121197},
+    "get_environment_document": {"environment": "Development"},
+    "get_audit_log": {},
+}
+
 
 @pytest.mark.parametrize("tool", sorted(MCP_READS))
 def test_allowlisted_mcp_reads_pass(tool):
-    assert check_read(tool, {}, SCOPE) is ReadKind.MCP
+    assert check_read(tool, MINIMAL_ARGS[tool], SCOPE) is ReadKind.MCP
 
 
 @pytest.mark.parametrize("tool", sorted(GATE_NATIVE_READS))
 def test_gate_native_reads_pass(tool):
-    assert check_read(tool, {}, SCOPE) is ReadKind.NATIVE
+    assert check_read(tool, MINIMAL_ARGS[tool], SCOPE) is ReadKind.NATIVE
+
+
+def test_every_read_has_a_required_scope_rule():
+    assert set(REQUIRED_SCOPE_ARGS) == MCP_READS | GATE_NATIVE_READS
+    assert REQUIRED_SCOPE_ARGS["get_audit_log"] is None
+
+
+@pytest.mark.parametrize("tool", sorted(t for t, a in REQUIRED_SCOPE_ARGS.items() if a))
+def test_read_without_its_required_scope_arg_is_refused(tool):
+    with pytest.raises(ToolDenied, match="requires"):
+        check_read(tool, {}, SCOPE)
+
+
+@pytest.mark.parametrize(("tool", "args"), [
+    ("list_project_features", {"project_id": 56664}),        # right project, wrong arg name
+    ("list_project_features", {"Project_PK": 56664}),        # names match exactly
+    ("list_project_environments", {"project_pk": 56664}),    # this tool takes "id"
+    ("list_feature_segments", {"environment_pk": 121197}),   # this tool takes "environment"
+    ("get_environment_feature_versions", {"environment": 121197}),
+    ("get_environment_document", {"environment_pk": 121197}),
+])
+def test_scope_arg_under_another_name_does_not_satisfy_the_requirement(tool, args):
+    with pytest.raises(ToolDenied, match="requires"):
+        check_read(tool, args, SCOPE)
+
+
+@pytest.mark.parametrize("value", [True, False, None, [56664], {"id": 56664}, 56664.0])
+def test_non_scalar_project_values_are_refused(value):
+    with pytest.raises(ToolDenied, match="scalar"):
+        check_read("list_project_features", {"project_pk": value}, SCOPE)
+
+
+@pytest.mark.parametrize("value", [True, None, [121197], {"id": 121197}, ("Development",)])
+def test_non_scalar_environment_values_are_refused(value):
+    with pytest.raises(ToolDenied, match="scalar"):
+        check_read("list_feature_segments", {"environment": value}, SCOPE)
+
+
+def test_non_scalar_optional_scope_value_is_refused():
+    with pytest.raises(ToolDenied, match="scalar"):
+        check_read("get_audit_log", {"environment": ["Development", "Production"]}, SCOPE)
+
+
+def test_non_scope_args_may_be_lists():
+    args = {"environment": "Development", "features": ["agent_prompt_version"]}
+    assert check_read("get_audit_log", args, SCOPE) is ReadKind.NATIVE
 
 
 def test_allowlist_is_exactly_the_planned_names():
@@ -67,14 +128,18 @@ def test_reads_and_writes_do_not_overlap():
 
 
 def test_read_scoped_to_our_project():
-    assert check_read("list_project_features", {"project_id": 56664}, SCOPE) is ReadKind.MCP
+    assert check_read("list_project_features", {"project_pk": 56664}, SCOPE) is ReadKind.MCP
+    assert check_read("list_project_features", {"project_pk": "OpsPilot"}, SCOPE) is ReadKind.MCP
     with pytest.raises(ToolDenied, match="project"):
-        check_read("list_project_features", {"project_id": 1}, SCOPE)
+        check_read("list_project_features", {"project_pk": 1}, SCOPE)
+    with pytest.raises(ToolDenied, match="project"):
+        check_read("list_project_features", {"project_pk": 56664, "project_id": 1}, SCOPE)
 
 
 @pytest.mark.parametrize("args", [
     {"environment": 121197, "feature": 306127},
-    {"environment_pk": "121198", "feature_pk": 306127},
+    {"environment": "121198", "feature": 306127},
+    {"environment": "Demo Production", "feature": 306127},
 ])
 def test_read_in_allowed_environment(args):
     assert check_read("list_feature_segments", args, SCOPE) is ReadKind.MCP
@@ -84,6 +149,7 @@ def test_read_in_allowed_environment(args):
     {"environment": 999, "feature": 306127},
     {"environment_pk": 121201, "feature_pk": 306127},
     {"environment_api_key": "someone-elses-key"},
+    {"environment_pk": 121197, "environment_api_key": "someone-elses-key"},
 ])
 def test_read_in_other_environment_is_refused(args):
     with pytest.raises(ToolDenied, match="environment"):
