@@ -44,6 +44,9 @@ https://claude.ai/artifact/Y2dedK54p88CAEUoPyjdHi (tabs: plan, Development plan)
 - New benchmark incident: uv run python -m bench.make_incident --seed 1
 
 ## Git
-- One branch per task: <name>/<area>-<short>. PRs under ~400 changed lines.
+- Each person works on their own branch: arnab-dev, naman-dev, khyati-dev.
+  Start from arnab-dev (CP0 skeleton and contracts). Everything merges into
+  main at the end; Arnab merges. Never commit straight to main.
+- Until main exists, arnab-dev is GitHub's default branch.
 - Commit messages: "area: what changed".
-- main only takes PRs with green CI. Checkpoints are tagged cpN-name.
+- CI runs on pushes to *-dev branches and on PRs. Checkpoints are tagged cpN-name.
