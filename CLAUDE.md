@@ -47,6 +47,7 @@ https://claude.ai/artifact/Y2dedK54p88CAEUoPyjdHi (tabs: plan, Development plan)
 - Each person works on their own branch: arnab-dev, naman-dev, khyati-dev.
   Start from arnab-dev (CP0 skeleton and contracts). Everything merges into
   main at the end; Arnab merges. Never commit straight to main.
-- Until main exists, arnab-dev is GitHub's default branch.
+- main is GitHub's default branch and stays empty until the final merge.
+  Merge into main through PRs (arnab-dev -> main, naman-dev -> main, ...).
 - Commit messages: "area: what changed".
 - CI runs on pushes to *-dev branches and on PRs. Checkpoints are tagged cpN-name.
