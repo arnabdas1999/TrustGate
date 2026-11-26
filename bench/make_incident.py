@@ -5,7 +5,8 @@
 Writes:
   bench/releases/<domain>-<set>-<seed>.json  the release (flag changes only, culprit not marked)
   bench/keys/<domain>-<set>-<seed>.json      the sealed answer key (git-ignored until eval ends)
-  bench/keys/hashes.txt                      one SHA-256 per key, committed now as proof
+  bench/keys/hashes.txt                      one SHA-256 per eval key, committed now as proof
+  bench/keys/hashes-dev.txt                  dev-case hashes (git-ignored, never reported)
 
 The key carries a random salt, so nobody can recover the culprit by hashing guesses.
 Prints only the release path and the key hash. Never print or open the key while timing.
@@ -119,9 +120,12 @@ def write_incident(
     release = {"case": name, "domain": domain, "set": case_set, "seed": seed,
                "changes": changes, "key_sha256": digest}
     release_path = releases / f"{name}.json"
-    release_path.write_text(json.dumps(release, indent=2) + "\n", encoding="utf-8")
-    key_path.write_text(canonical_json(sealed) + "\n", encoding="utf-8")
-    with (keys / "hashes.txt").open("a", encoding="utf-8") as fh:
+    release_path.write_text(json.dumps(release, indent=2) + "\n", encoding="utf-8", newline="\n")
+    key_path.write_text(canonical_json(sealed) + "\n", encoding="utf-8", newline="\n")
+    # Only eval hashes go in the committed hashes.txt (the pre-registration proof).
+    # Dev hashes go in hashes-dev.txt, which is git-ignored.
+    hashes = keys / ("hashes.txt" if case_set == "eval" else "hashes-dev.txt")
+    with hashes.open("a", encoding="utf-8", newline="\n") as fh:
         fh.write(f"{name} {digest}\n")
     return release_path, digest
 

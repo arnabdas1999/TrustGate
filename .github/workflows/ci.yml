@@ -28,9 +28,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Scan the whole history with the gitleaks binary. The gitleaks action scans
+      # "<first PR commit>^..head", which errors here because our first commit has no parent.
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Scan full git history for secrets
+        run: gitleaks git --redact --verbose .
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the compose images (web, api, gate)
+        run: docker compose build
 
   web:
     runs-on: ubuntu-latest

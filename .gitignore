@@ -6,6 +6,9 @@
 
 # Sealed benchmark answer keys: committed only after the eval runs (hashes.txt is committed now)
 bench/keys/*.json
+# Dev cases are for tuning only and never reported
+bench/keys/hashes-dev.txt
+bench/releases/*-dev-*.json
 
 # Runtime data
 data/

@@ -7,11 +7,34 @@ for your approval before changing a single production flag.**
 Built for [Toggle Wars](https://www.wemakedevs.org/hackathons/flagsmith), Track 2: AI Agents and
 Feature Flags.
 
-> Demo video: _coming Saturday_ · Status: in development (checkpoint CP0)
+> Demo video: _coming Saturday_ · Status: in development
 
 ## How it works
 
-_TODO (Arnab, Saturday): architecture diagram and a 5-line walkthrough._
+```mermaid
+flowchart LR
+    subgraph prod["Your AI agents (OpsPilot, VaultGuard)"]
+        AG["Agent"]
+    end
+    FS[("Flagsmith")]
+    AG -- "flags per request<br/>(SDK, server-side key)" --> FS
+    AG -- "failure" --> INC["Incident capture<br/>(flags it received, traits, DB, trace)"]
+    INC --> ORCH["Orchestrator"]
+    ORCH --> INV["Investigator (LLM)<br/>no Flagsmith key"]
+    INV -- "allowlisted reads" --> GATE
+    ORCH --> SB["Sandbox replays<br/>captured config + overrides"]
+    SB --> GR["Deterministic grader<br/>(database, not the agent's word)"]
+    GR --> SEARCH["Delta debugging<br/>+ repair validation"]
+    SEARCH --> PROP["Proposal<br/>(write built by code)"]
+    PROP --> UI["Web UI"]
+    UI -- "human approves" --> API["API signs a<br/>single-use approval"]
+    API --> GATE["Gate<br/>(only holder of the org key)"]
+    GATE -- "one approved write (MCP)" --> FS
+    GATE --> VER["Verifier read-back"]
+    VER -- "server-side key" --> FS
+    CC["Claude Code / Cursor"] -- "MCP, no write tools" --> MCPS["TrustGate MCP server"]
+    MCPS --> API
+```
 
 1. A Flagsmith release changes several flags that control an AI agent (model, prompt, tools).
 2. The agent misbehaves. TrustGate captures exactly what the failing agent received.
@@ -91,15 +114,41 @@ docker compose up --build
 Open http://localhost:3000. Expected: an investigations list with an OpsPilot incident waiting
 for approval. With `MOCK=1` every number on screen is fixture data.
 
-Without Docker:
+Port 3000 already taken? Pick another host port and tell the API about it:
+`WEB_PORT=3001 WEB_ORIGIN=http://localhost:3001 docker compose up --build`.
+
+Without Docker (works the same in PowerShell, bash and zsh):
 
 ```bash
+cp .env.example .env    # set APPROVER_PASSWORD; MOCK=1 is already set
 uv sync
-uv run uvicorn api.main:app --reload --port 8000
-cd web && npm install && npm run dev
+uv run uvicorn api.main:app --env-file .env --port 8000
 ```
 
-On a OneDrive folder, set `UV_LINK_MODE=copy` before `uv sync`.
+`--env-file .env` matters: the API reads settings only from its environment, so without it
+login stays disabled. In a second terminal, start the UI:
+
+```bash
+cd web
+npm ci
+npm run dev
+```
+
+Check it end to end with the smoke test, which signs in, approves the demo proposal and waits
+for Verified. It reads the password from your shell, not from `.env`:
+
+```bash
+# PowerShell: $env:APPROVER_PASSWORD = "<the password in .env>"
+# bash/zsh:   export APPROVER_PASSWORD="<the password in .env>"
+uv run python -m scripts.smoke     # expect: SMOKE PASSED
+```
+
+With `MOCK=1` the gate isn't needed. With real Flagsmith keys, run it too (third terminal):
+`uv run uvicorn gate.service:app --env-file .env.gate --port 8100`.
+
+Notes: on a OneDrive folder set `UV_LINK_MODE=copy` before `uv sync`; a uv warning that
+hardlinking failed is harmless. If the API isn't on port 8000, build the UI with a matching
+`NEXT_PUBLIC_API_URL`.
 
 ### Environment variables
 
@@ -121,8 +170,15 @@ key.
 | `WEB_ORIGIN` | `.env` | API | Allowed browser origin (CORS), default `http://localhost:3000` |
 | `MOCK` | `.env` | Development | `1` serves fixture data so the UI works without the backend |
 | `FLAGSMITH_API_KEY` | `.env.gate` | Gate | Flagsmith organisation API key. Lives nowhere else |
-| `FLAGSMITH_MCP_URL`, `FLAGSMITH_API_URL` | `.env.gate` | Gate | Flagsmith endpoints (defaults to Flagsmith Cloud) |
-| `FLAGSMITH_PROJECT_ID` | `.env.gate` | Gate | The only project writes may touch |
+| `GATE_PROJECT_ID`, `GATE_PROJECT_NAME` | `.env.gate` | Gate | The only Flagsmith project reads and writes may touch (numeric id) |
+| `GATE_ENVIRONMENTS` | `.env.gate` | Gate | Allowed environments as `Name:id` pairs, e.g. `Development:121197,Demo Production:121198` |
+| `GATE_SERVER_KEY_<ENV>` | `.env.gate` | Gate | One server-side key per environment, e.g. `GATE_SERVER_KEY_DEMO_PRODUCTION` |
+| `FLAGSMITH_MCP_URL` | `.env.gate` | Gate | Optional. Leave unset to use the default, `https://mcp.flagsmith.com/mcp` |
+| `GATE_DB_PATH`, `GATE_AUDIT_PATH` | `.env.gate` | Gate | Optional paths for the approvals database and the audit trail |
+| `GATE_SHARED_TOKEN` | both | Gate, API | Optional. When set, every gate call needs this bearer token (off by default). Put the same value in `.env` too, or the API's approvals and reads are refused |
+
+Without the required gate settings, the gate still starts (so `docker compose up` works) and
+answers 503.
 
 The web app reads `NEXT_PUBLIC_API_URL` at build time (default `http://localhost:8000`).
 
@@ -203,8 +259,9 @@ rule-of-three evidence line.
 
 ## Benchmark
 
-Results: `bench/results.md`, generated from records by `uv run python -m bench.results`. Every
-number there was measured, bad runs included.
+Results: `bench/results.md`, generated from records by `uv run python -m bench.results` (it
+appears in the repo once the eval runs are done). Every number there was measured, bad runs
+included.
 
 ### Pre-registration
 
@@ -226,7 +283,8 @@ delta debugging?
 | TrustGate | LLM-guided search; a human approves the proposed repair |
 
 **Cases.** 6 eval cases, 3 OpsPilot and 3 VaultGuard, generated with
-`bench/make_incident.py --set eval` from verified change pools. Each release has 4 or 5 flag
+`uv run python -m bench.make_incident --domain <opspilot|vaultguard> --seed N --set eval` from
+verified change pools. Each release has 4 or 5 flag
 changes with one bad change (or bad pair) hidden among safe ones. Answer keys are salted and
 sealed; only their SHA-256 hashes are committed before the runs (`bench/keys/hashes.txt`).
 Target mix: 1 to 2 of the 6 cases are two-flag interactions. _Final seeds and the exact mix are
@@ -242,7 +300,7 @@ filled in here at CP7._ Dev cases used for tuning are never reported.
 
 **Metrics** (lead metrics first): human active time; cost saving kept versus the release; flags
 reverted unnecessarily; interaction cases found; final fixes failing a fresh validation;
-time to first correct suspect; time to applied fix; correct attribution; diagnostic runs;
+time to first suspect (runs that blamed the right flags); time to applied fix; correct attribution; diagnostic runs;
 inference cost. Scaling test: search runs at 5, 10 and 20 changed flags, plain versus guided.
 
 **Expectations, stated before running.**
