@@ -169,6 +169,7 @@ key.
 | `GATE_URL` | `.env` | API | Where the API reaches the gate (`http://gate:8100` in compose) |
 | `WEB_ORIGIN` | `.env` | API | Allowed browser origin (CORS), default `http://localhost:3000` |
 | `MOCK` | `.env` | Development | `1` serves fixture data so the UI works without the backend |
+| `TRUSTGATE_SEARCH` | `.env` | API (MOCK=0) | `sandbox` runs the real search (compose default); `scripted:flag[@segment]` is a demo stand-in; unset means investigations end INCONCLUSIVE |
 | `FLAGSMITH_API_KEY` | `.env.gate` | Gate | Flagsmith organisation API key. Lives nowhere else |
 | `GATE_PROJECT_ID`, `GATE_PROJECT_NAME` | `.env.gate` | Gate | The only Flagsmith project reads and writes may touch (numeric id) |
 | `GATE_ENVIRONMENTS` | `.env.gate` | Gate | Allowed environments as `Name:id` pairs, e.g. `Development:121197,Demo Production:121198` |
