@@ -16,10 +16,14 @@ Development needs --confirm-environment repeating its exact name.
 
 Snapshots go to data/releases/<environment>/<UTC time>/ (git-ignored):
 - baseline_env.json, then release_env.json
-- each with the edge document (current right after a write; it's what the SDK evaluates),
-  the admin document (it can lag a write by about a minute, so it's kept for reference), and
-  the flag values taken from the edge
+- each with the flag values and `enabled` (typed, from the admin document), the values the
+  edge serves, and both documents trimmed to the environment id/name, feature states and
+  project segments (no identity overrides, keys or other environment settings). The edge
+  document is current right after a write (it's what the SDK evaluates); the admin document
+  can lag a write by about a minute, so it's kept for reference.
 - release.json, the changes applied
+
+--revert restores both the value and `enabled` of each release flag from the baseline.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -77,12 +82,22 @@ def same_value(a: Any, b: Any) -> bool:
     return a == b or str(a) == str(b)
 
 
-def plan_changes(current: dict[str, Any], release: dict[str, FlagValue]) -> list[FlagChange]:
+def plan_changes(current: dict[str, Any], release: dict[str, FlagValue], *,
+                 enabled: Mapping[str, bool] | None = None,
+                 current_enabled: Mapping[str, bool] | None = None) -> list[FlagChange]:
+    """Flags whose value differs, plus (when `enabled` is given) those whose enabled differs."""
     missing = sorted(set(release) - set(current))
     if missing:
         raise ReleaseError(f"flags not in the environment: {missing}")
+    enabled_now = current_enabled or {}
+
+    def differs(f: str) -> bool:
+        if not same_value(current[f], release[f]):
+            return True
+        return enabled is not None and enabled.get(f, True) != enabled_now.get(f, True)
+
     return [FlagChange(flag=f, old=current[f], new=release[f])
-            for f in sorted(release) if not same_value(current[f], release[f])]
+            for f in sorted(release) if differs(f)]
 
 
 class AdminApi:
@@ -122,11 +137,12 @@ class AdminApi:
         return self._get(f"/api/v1/environments/{self.environment(environment)['api_key']}"
                          "/document/")
 
-    def publish_value(self, env_id: int, feature: str, value: FlagValue, note: str) -> str:
+    def publish_value(self, env_id: int, feature: str, value: FlagValue, note: str, *,
+                      enabled: bool = True) -> str:
         fid = self.feature_id(feature)
         path = f"/api/v1/environments/{env_id}/features/{fid}/versions/"
         body = {"publish_immediately": True, "description": f"release.py: {note}",
-                "feature_states_to_update": [{"feature": fid, "enabled": True,
+                "feature_states_to_update": [{"feature": fid, "enabled": bool(enabled),
                                               "feature_segment": None,
                                               "feature_state_value": typed_value(value)}]}
         r = self._http.post(path, json=body, headers={"Authorization": f"Api-Key {self._key}"})
@@ -141,8 +157,16 @@ def _values(document: dict[str, Any]) -> dict[str, Any]:
             for fs in document.get("feature_states", [])}
 
 
-def _without_keys(document: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in document.items() if k != "api_key"}
+def _enabled(document: dict[str, Any]) -> dict[str, bool]:
+    return {fs["feature"]["name"]: bool(fs.get("enabled"))
+            for fs in document.get("feature_states", [])}
+
+
+def _trimmed(document: dict[str, Any]) -> dict[str, Any]:
+    """Only what a diff needs: no identity overrides, keys or other environment settings."""
+    return {"id": document.get("id"), "name": document.get("name"),
+            "feature_states": document.get("feature_states", []),
+            "project": {"segments": (document.get("project") or {}).get("segments", [])}}
 
 
 def snapshot(api: AdminApi, environment: str, *, server_key: str,
@@ -158,30 +182,53 @@ def snapshot(api: AdminApi, environment: str, *, server_key: str,
                            f"not {environment}")
     admin_doc = api.admin_document(environment)
     edge_values, admin_values = _values(edge_doc), _values(admin_doc)
-    match = edge_values.keys() == admin_values.keys() and all(
+    edge_enabled, admin_enabled = _enabled(edge_doc), _enabled(admin_doc)
+    match = edge_values.keys() == admin_values.keys() and edge_enabled == admin_enabled and all(
         same_value(edge_values[k], admin_values[k]) for k in edge_values)
     # Typed values come from the admin document (the edge turns ints into strings); the edge
     # document is the current one, so `admin_values_match` says whether admin has caught up.
     return {"environment": environment, "environment_id": env["id"],
             "taken_at": datetime.now(UTC).isoformat(), "values": admin_values,
-            "edge_values": edge_values, "admin_values_match": match,
-            "edge_document": _without_keys(edge_doc), "admin_document": _without_keys(admin_doc)}
+            "enabled": admin_enabled, "edge_values": edge_values,
+            "edge_enabled": edge_enabled, "admin_values_match": match,
+            "edge_document": _trimmed(edge_doc), "admin_document": _trimmed(admin_doc)}
 
 
-def apply_values(api: AdminApi, environment: str, changes: list[FlagChange], *,
-                 note: str) -> list[str]:
+def apply_values(api: AdminApi, environment: str, changes: list[FlagChange], *, note: str,
+                 confirm: str | None = None,
+                 enabled: Mapping[str, bool] | None = None) -> list[str]:
+    """Publish each change. Refuses any environment but Development unless `confirm` repeats
+    its exact name. `enabled` maps flag -> enabled; flags not in it are published enabled."""
+    check_environment_allowed(environment, confirm)
     env_id = api.environment(environment)["id"]
-    return [api.publish_value(env_id, c.flag, c.new, note) for c in changes]
+    enabled = enabled or {}
+    return [api.publish_value(env_id, c.flag, c.new, note, enabled=enabled.get(c.flag, True))
+            for c in changes]
+
+
+def revert_target(saved: dict[str, Any], environment: str) -> tuple[dict[str, Any],
+                                                                    dict[str, bool]]:
+    """The release flags' values and enabled from a saved baseline snapshot."""
+    if saved.get("environment") != environment:
+        raise ReleaseError("that baseline belongs to another environment")
+    # Baselines saved before `enabled` was captured still carry the admin document.
+    saved_enabled = saved.get("enabled") or _enabled(saved.get("admin_document") or {})
+    values = {k: saved["values"][k] for k in PLAN_RELEASE}
+    return values, {k: bool(saved_enabled.get(k, True)) for k in PLAN_RELEASE}
 
 
 def _wait_until_shown(api: AdminApi, environment: str, server_key: str, want: dict[str, Any],
+                      want_enabled: Mapping[str, bool] | None = None,
                       timeout: float = 150.0) -> dict[str, Any]:
     """Both documents lag a write (edge: seconds, admin: up to about a minute). Wait for both."""
     start = time.monotonic()
+    want_enabled = want_enabled or {}
     while True:
         snap = snapshot(api, environment, server_key=server_key)
         shown = all(same_value(snap["values"].get(k), v)
-                    and same_value(snap["edge_values"].get(k), v) for k, v in want.items())
+                    and same_value(snap["edge_values"].get(k), v) for k, v in want.items()) \
+            and all(snap["enabled"].get(k) is v and snap["edge_enabled"].get(k) is v
+                    for k, v in want_enabled.items())
         if shown:
             return snap
         if time.monotonic() - start > timeout:
@@ -195,12 +242,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--confirm-environment")
     ap.add_argument("--project-id", type=int, default=int(os.environ.get("FLAGSMITH_PROJECT_ID",
                                                                          "0")))
-    ap.add_argument("--revert", type=Path, help="baseline_env.json to restore the values from")
+    ap.add_argument("--revert", type=Path,
+                    help="baseline_env.json to restore the values and enabled from")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--out", type=Path, default=Path("data/releases"))
     args = ap.parse_args(argv)
 
     try:
+        # Fail fast before any read; apply_values checks again before it writes.
         check_environment_allowed(args.environment, args.confirm_environment)
         if not args.project_id:
             raise ReleaseError("set FLAGSMITH_PROJECT_ID or --project-id")
@@ -213,16 +262,19 @@ def main(argv: list[str] | None = None) -> int:
         if not before["admin_values_match"]:
             raise ReleaseError("Flagsmith is still settling a recent change (admin and edge "
                                "documents differ); try again in a minute")
+        enabled: dict[str, bool] | None = None
         if args.revert:
-            saved = json.loads(args.revert.read_text())
-            if saved.get("environment") != args.environment:
-                raise ReleaseError("that baseline belongs to another environment")
-            target = {k: saved["values"][k] for k in PLAN_RELEASE}
+            target, enabled = revert_target(json.loads(args.revert.read_text()),
+                                            args.environment)
         else:
-            target = dict(PLAN_RELEASE)
-        changes = plan_changes(before["values"], target)
+            target = dict(PLAN_RELEASE)  # the forward release publishes every flag enabled
+        changes = plan_changes(before["values"], target, enabled=enabled,
+                               current_enabled=before["enabled"])
+        want_enabled = {c.flag: (enabled or {}).get(c.flag, True) for c in changes}
         for c in changes:
-            print(f"  {c.flag}: {c.old!r} -> {c.new!r}")
+            was, now = before["enabled"].get(c.flag, True), want_enabled[c.flag]
+            flip = "" if was == now else f" (enabled {was} -> {now})"
+            print(f"  {c.flag}: {c.old!r} -> {c.new!r}{flip}")
         if args.dry_run or not changes:
             print("dry run, nothing written" if args.dry_run else "nothing to change")
             return 0
@@ -232,12 +284,15 @@ def main(argv: list[str] | None = None) -> int:
         label = "revert" if args.revert else "release"
         (folder / f"{'pre_revert' if args.revert else 'baseline'}_env.json").write_text(
             json.dumps(before, indent=2, sort_keys=True))
-        uuids = apply_values(api, args.environment, changes, note=f"{label} {folder.name}")
-        after = _wait_until_shown(api, args.environment, server_key, target)
+        uuids = apply_values(api, args.environment, changes, note=f"{label} {folder.name}",
+                             confirm=args.confirm_environment, enabled=want_enabled)
+        after = _wait_until_shown(api, args.environment, server_key,
+                                  {c.flag: c.new for c in changes}, want_enabled)
         (folder / f"{label}_env.json").write_text(json.dumps(after, indent=2, sort_keys=True))
         (folder / f"{label}.json").write_text(json.dumps(
             {"environment": args.environment, "versions": uuids,
-             "changes": [c.model_dump(mode="json") for c in changes]}, indent=2))
+             "changes": [c.model_dump(mode="json") for c in changes],
+             "enabled": want_enabled}, indent=2))
         print(f"{label}: {len(changes)} flags changed; snapshots in {folder}")
         return 0
     except ReleaseError as exc:

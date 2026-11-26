@@ -3,6 +3,7 @@ import json
 import httpx
 import pytest
 
+import scripts.release as release
 from scripts.release import (
     PLAN_RELEASE,
     AdminApi,
@@ -10,6 +11,7 @@ from scripts.release import (
     apply_values,
     check_environment_allowed,
     plan_changes,
+    revert_target,
     snapshot,
     typed_value,
 )
@@ -28,14 +30,33 @@ BASELINE = {"agent_model": "model_flagship", "agent_prompt_version": "v1_strict"
 EDGE_BASELINE = {**BASELINE, "agent_max_steps": "6"}
 
 
-def _doc(values, env_id=121197):
+SEGMENTS = [{"name": "tier0_production", "rules": [{"type": "ALL", "conditions": [],
+                                                     "rules": []}],
+             "feature_states": [{"enabled": True, "feature": {"name": "agent_model"},
+                                 "feature_state_value": "model_flagship"}]}]
+
+
+def _doc(values, env_id=121197, enabled=None):
+    enabled = enabled or {}
     return {"id": env_id, "api_key": "dev-client-key", "name": "Development",
-            "feature_states": [{"enabled": True, "feature": {"name": k}, "feature_state_value": v}
-                               for k, v in values.items()], "project": {"segments": []}}
+            "feature_states": [{"enabled": enabled.get(k, True), "feature": {"name": k},
+                                "feature_state_value": v} for k, v in values.items()],
+            "project": {"segments": SEGMENTS, "hide_disabled_flags": False,
+                        "organisation": {"name": "Lazy Hackers", "persist_trait_data": True}},
+            "identity_overrides": [{"identifier": "payments-prod", "identity_traits": [],
+                                    "identity_features": []}],
+            "allow_client_traits": True, "hide_sensitive_data": False,
+            "webhook_config": {"url": "https://example.invalid/hook", "secret": "whsec"},
+            "amplitude_config": {"api_key": "amp-secret"}}
 
 
 class FakeFlagsmith:
-    def __init__(self):
+    """Serves the admin and edge documents and applies published versions to its state."""
+
+    def __init__(self, values=None, enabled=None, env_id=121197):
+        self.values = dict(BASELINE if values is None else values)
+        self.enabled = dict(enabled or {})
+        self.env_id = env_id
         self.versions = []
         self.headers = []
 
@@ -47,11 +68,19 @@ class FakeFlagsmith:
         if path == "/api/v1/projects/56664/features/":
             return httpx.Response(200, json={"results": FEATURES})
         if path.endswith("/document/"):  # admin document: typed values
-            return httpx.Response(200, json=_doc(BASELINE))
+            return httpx.Response(200, json=_doc(self.values, self.env_id, self.enabled))
         if path == "/api/v1/environment-document/":  # edge document: ints come back as strings
-            return httpx.Response(200, json=_doc(EDGE_BASELINE))
+            edge = {k: str(v) if isinstance(v, int) and not isinstance(v, bool) else v
+                    for k, v in self.values.items()}
+            return httpx.Response(200, json=_doc(edge, self.env_id, self.enabled))
         if path.endswith("/versions/") and request.method == "POST":
-            self.versions.append((path, json.loads(request.content)))
+            body = json.loads(request.content)
+            self.versions.append((path, body))
+            for fs in body["feature_states_to_update"]:
+                name = next(f["name"] for f in FEATURES if f["id"] == fs["feature"])
+                typed = fs["feature_state_value"]
+                self.values[name] = next(v for k, v in typed.items() if k.endswith("_value"))
+                self.enabled[name] = fs["enabled"]
             return httpx.Response(201, json={"uuid": f"v-{len(self.versions)}"})
         return httpx.Response(404)
 
@@ -159,3 +188,149 @@ def test_development_needs_no_confirmation():
 def test_unknown_environment_is_refused(api):
     with pytest.raises(ReleaseError, match="unknown environment"):
         api.environment("Staging")
+
+
+# --- enabled, safety check inside apply_values, trimmed snapshots, main() ------------------
+
+
+def _edge_client(fake):
+    return httpx.Client(transport=httpx.MockTransport(fake),
+                        base_url="https://edge.api.flagsmith.com")
+
+
+def test_publish_value_sends_enabled(api, fake):
+    api.publish_value(121197, "agent_max_steps", 6, "x", enabled=False)
+    body = fake.versions[0][1]["feature_states_to_update"][0]
+    assert body["enabled"] is False
+    assert body["feature_state_value"] == {"type": "int", "integer_value": 6}
+
+
+@pytest.mark.parametrize("confirm", [None, "Development", "demo production"])
+def test_apply_values_refuses_other_environments_without_confirmation(api, fake, confirm):
+    changes = plan_changes(BASELINE, PLAN_RELEASE)
+    with pytest.raises(ReleaseError, match="confirm"):
+        apply_values(api, "Demo Production", changes, note="x", confirm=confirm)
+    assert fake.versions == [] and fake.headers == []  # refused before any request
+
+
+def test_apply_values_writes_a_confirmed_environment(api, fake):
+    changes = plan_changes(BASELINE, PLAN_RELEASE)
+    apply_values(api, "Demo Production", changes, note="x", confirm="Demo Production")
+    assert len(fake.versions) == 5
+    assert all(p.startswith("/api/v1/environments/121198/") for p, _ in fake.versions)
+
+
+def test_apply_values_restores_enabled_per_flag(api, fake):
+    changes = plan_changes(BASELINE, {"agent_model": "model_cheap", "agent_max_steps": 12})
+    apply_values(api, "Development", changes, note="x", enabled={"agent_max_steps": False})
+    sent = {b["feature_states_to_update"][0]["feature"]: b["feature_states_to_update"][0]["enabled"]
+            for _, b in fake.versions}
+    assert sent == {306125: True, 306129: False}  # unlisted flags stay enabled
+
+
+def test_snapshot_captures_enabled(api):
+    fake = FakeFlagsmith(enabled={"agent_safe_fallback": False})
+    api._http = httpx.Client(transport=httpx.MockTransport(fake),
+                             base_url="https://api.flagsmith.com")
+    snap = snapshot(api, "Development", server_key="ser.abc", edge_client=_edge_client(fake))
+    assert snap["enabled"]["agent_safe_fallback"] is False
+    assert snap["enabled"]["agent_model"] is True
+    assert set(snap["enabled"]) == set(BASELINE)
+
+
+def test_snapshot_keeps_only_feature_states_and_segments(api, fake):
+    snap = snapshot(api, "Development", server_key="ser.abc", edge_client=_edge_client(fake))
+    for name in ("edge_document", "admin_document"):
+        doc = snap[name]
+        assert set(doc) == {"id", "name", "feature_states", "project"}, name
+        assert doc["id"] == 121197 and doc["name"] == "Development"
+        assert doc["project"] == {"segments": SEGMENTS}
+        assert len(doc["feature_states"]) == len(BASELINE)
+    text = json.dumps(snap)
+    for secret in ("payments-prod", "whsec", "amp-secret", "dev-client-key", "Lazy Hackers"):
+        assert secret not in text
+
+
+def test_plan_changes_with_enabled_lists_enabled_only_changes():
+    target = {"agent_model": "model_flagship", "agent_max_steps": 6}
+    assert plan_changes(BASELINE, target) == []
+    changes = plan_changes(BASELINE, target, enabled={"agent_max_steps": False},
+                           current_enabled={"agent_max_steps": True})
+    assert [(c.flag, c.old, c.new) for c in changes] == [("agent_max_steps", 6, 6)]
+    assert plan_changes(BASELINE, target, enabled={"agent_max_steps": False},
+                        current_enabled={"agent_max_steps": False}) == []
+
+
+def test_revert_target_takes_values_and_enabled_from_the_baseline():
+    saved = {"environment": "Development", "values": BASELINE,
+             "enabled": {**dict.fromkeys(BASELINE, True), "agent_context_mode": False}}
+    values, enabled = revert_target(saved, "Development")
+    assert values == {k: BASELINE[k] for k in PLAN_RELEASE}
+    assert enabled == {**dict.fromkeys(PLAN_RELEASE, True), "agent_context_mode": False}
+    with pytest.raises(ReleaseError, match="another environment"):
+        revert_target(saved, "Demo Production")
+
+
+def test_revert_target_reads_enabled_from_an_older_baseline():
+    # Baselines saved before `enabled` was captured still have the admin document.
+    old = {"environment": "Development", "values": BASELINE,
+           "admin_document": _doc(BASELINE, enabled={"agent_model": False})}
+    _, enabled = revert_target(old, "Development")
+    assert enabled["agent_model"] is False and enabled["agent_max_steps"] is True
+
+
+@pytest.fixture
+def run_main(monkeypatch, tmp_path):
+    """main() against a FakeFlagsmith: no network, no real keys."""
+    real_snapshot = release.snapshot
+
+    def run(fake, *args):
+        monkeypatch.setenv("FLAGSMITH_API_KEY", "pre.fake")
+        monkeypatch.setenv("FLAGSMITH_SERVER_KEY", "ser.fake")
+        client = httpx.Client(transport=httpx.MockTransport(fake),
+                              base_url="https://api.flagsmith.com")
+        monkeypatch.setattr(release, "AdminApi",
+                            lambda key, project_id: AdminApi(key, project_id=project_id,
+                                                             client=client))
+        monkeypatch.setattr(release, "snapshot", lambda api, env, server_key: real_snapshot(
+            api, env, server_key=server_key, edge_client=_edge_client(fake)))
+        return release.main(["--project-id", "56664", "--out", str(tmp_path), *args])
+
+    return run
+
+
+def test_main_release_then_revert_restores_values_and_enabled(run_main, tmp_path):
+    fake = FakeFlagsmith(enabled={"agent_context_mode": False})
+    assert run_main(fake, "--environment", "Development") == 0
+    assert {k: fake.values[k] for k in PLAN_RELEASE} == PLAN_RELEASE
+    assert fake.enabled["agent_context_mode"] is True  # the forward release enables
+    baseline = next(tmp_path.glob("Development/*/baseline_env.json"))
+    assert json.loads(baseline.read_text())["enabled"]["agent_context_mode"] is False
+
+    fake.versions.clear()
+    assert run_main(fake, "--environment", "Development", "--revert", str(baseline)) == 0
+    assert fake.values == BASELINE
+    assert fake.enabled["agent_context_mode"] is False
+    assert len(fake.versions) == 5
+
+
+def test_main_passes_the_confirmation_to_apply_values(run_main, monkeypatch):
+    seen = {}
+    real_apply = release.apply_values
+
+    def spy(api, environment, changes, **kwargs):
+        seen.update(kwargs)
+        return real_apply(api, environment, changes, **kwargs)
+
+    monkeypatch.setattr(release, "apply_values", spy)
+    fake = FakeFlagsmith(env_id=121198)
+    assert run_main(fake, "--environment", "Demo Production",
+                    "--confirm-environment", "Demo Production") == 0
+    assert seen["confirm"] == "Demo Production"
+    assert all(p.startswith("/api/v1/environments/121198/") for p, _ in fake.versions)
+
+
+def test_main_refuses_an_unconfirmed_environment(run_main):
+    fake = FakeFlagsmith(env_id=121198)
+    assert run_main(fake, "--environment", "Demo Production") == 2
+    assert fake.versions == []
