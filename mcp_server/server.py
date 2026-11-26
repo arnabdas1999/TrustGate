@@ -33,6 +33,10 @@ class TrustGateServer:
         except _MethodNotFound:
             return {"jsonrpc": "2.0", "id": msg_id,
                     "error": {"code": -32601, "message": f"method not found: {method}"}}
+        except Exception as exc:  # noqa: BLE001 (one bad request must not kill the server)
+            log.exception("internal error handling %s", method)
+            return {"jsonrpc": "2.0", "id": msg_id,
+                    "error": {"code": -32603, "message": f"internal error: {type(exc).__name__}"}}
         return {"jsonrpc": "2.0", "id": msg_id, "result": result}
 
     def _dispatch(self, method: str | None, params: dict[str, Any]) -> dict[str, Any]:

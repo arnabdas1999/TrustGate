@@ -173,3 +173,42 @@ def test_read_tool_descriptions_name_their_required_scope_argument():
     for tool, arg in REQUIRED_SCOPE_ARGS.items():
         if arg:
             assert f"'{arg}'" in by_name[tool]["description"], tool
+
+
+def test_gate_reads_send_the_shared_token_and_api_calls_do_not():
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers.get("authorization")))
+        if request.url.path == "/gate/read":
+            return httpx.Response(200, json={"tool": "x", "is_error": False, "result": []})
+        return httpx.Response(200, json=VIEW)
+
+    backend = Backend(api_url="http://api:8000", gate_url="http://gate:8100",
+                      web_url="http://localhost:3000", gate_token="t0ken",
+                      client=httpx.Client(transport=httpx.MockTransport(handler)))
+    server = TrustGateServer(backend)
+    _call(server, "list_project_features", {"project_pk": 56664})
+    _call(server, "get_investigation", {"investigation_id": "inv_1"})
+    assert seen == [("/gate/read", "Bearer t0ken"), ("/api/investigations/inv_1", None)]
+
+
+def test_gate_token_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("GATE_SHARED_TOKEN", "from-env")
+    backend = Backend(api_url="http://a", gate_url="http://g", web_url="http://w")
+    assert backend._gate_headers == {"Authorization": "Bearer from-env"}
+    monkeypatch.delenv("GATE_SHARED_TOKEN")
+    assert Backend(api_url="http://a", gate_url="http://g", web_url="http://w")._gate_headers \
+        == {}
+
+
+def test_unexpected_exception_is_a_json_rpc_internal_error(setup, monkeypatch):
+    server, _ = setup
+    import mcp_server.server as srv
+
+    def boom(*a, **k):
+        raise RuntimeError("bug")
+    monkeypatch.setattr(srv, "call_tool", boom)
+    reply = server.handle({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                           "params": {"name": "get_investigation", "arguments": {}}})
+    assert reply["error"]["code"] == -32603 and reply["id"] == 9
