@@ -161,7 +161,8 @@ key.
 | `APPROVER_PASSWORD` | `.env` | Approving in the UI | Approver login. Login is disabled while empty |
 | `APPROVER_NAME` | `.env` | Audit trail | Name recorded on approvals |
 | `APPROVAL_SIGNING_SECRET` | both | Real writes | Shared HMAC secret; the gate accepts only approvals signed with it |
-| `FLAGSMITH_SERVER_KEY_OPSPILOT_PROD`, `..._VAULTGUARD_PROD` | `.env` | Agents, verifier | Server-side environment keys (`ser.…`) for local evaluation |
+| `FLAGSMITH_SERVER_KEY_<ENVIRONMENT>` | `.env` | Agents, verifier | Server-side environment key (`ser.…`), named after the environment, e.g. `FLAGSMITH_SERVER_KEY_DEMO_PRODUCTION` for "Demo Production" |
+| `TRUSTGATE_ENVIRONMENT` | `.env` | Orchestrator | Environment the repairs target (default `Demo Production`) |
 | `FLAGSMITH_SERVER_KEY_BENCH_1` … `_3` | `.env` | Benchmark | One server-side key per benchmark environment |
 | `LLM_PROVIDER` | `.env` | Agents, investigator | `gemini` (Gemini API key from Google AI Studio) |
 | `LLM_API_KEY` | `.env` | Agents, investigator | The Gemini API key. A Gemini subscription does not include API usage |
