@@ -102,6 +102,9 @@ def test_missing_flag_counts_as_default():
 @pytest.mark.parametrize(("served_value", "expected", "ok"), [
     ("6", 6, True), (6, "6", True), ("0.0", "0.0", True), (False, False, True),
     (False, "false", False), ("v1", "v2", False),
+    ("0.0", 0.0, True), (0.0, "0.0", True), ("0.5", 0.5, True), (0.5, "0.5", True),
+    (0.5, 0.5, True), ("0.50", 0.5, True), ("0.5", 0.6, False), ("abc", 0.5, False),
+    (6, 6.0, True), ("6", 6.0, True), (True, 1.0, False), (0.0, False, False),
 ])
 def test_value_comparison(served_value, expected, ok):
     exp = [Expectation(TIER0, {"f": expected})]

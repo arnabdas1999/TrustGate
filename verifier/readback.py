@@ -102,12 +102,28 @@ def _as_int(value: Any) -> int | None:
     return None
 
 
+def _as_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
 def _same(served: Any, expected: Any) -> bool:
     if isinstance(served, bool) or isinstance(expected, bool):
         return served is expected
     if served == expected:
         return True
-    # Flagsmith hands integers back as strings in some paths ("6" vs 6)
+    # Flagsmith hands numbers back as strings in some paths ("6" vs 6, "0.5" vs 0.5)
+    if isinstance(served, float) or isinstance(expected, float):
+        a, b = _as_float(served), _as_float(expected)
+        return a is not None and b is not None and a == b
     a, b = _as_int(served), _as_int(expected)
     return a is not None and a == b
 
