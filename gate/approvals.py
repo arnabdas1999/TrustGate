@@ -44,6 +44,10 @@ class Refusal(StrEnum):
     REUSED = "reused"
 
 
+class RegistrationConflict(Exception):
+    """The proposal id is already registered with a different payload, fingerprint or env."""
+
+
 class ApprovalRefused(Exception):
     def __init__(self, reason: Refusal, detail: str):
         super().__init__(f"{reason}: {detail}")
@@ -114,15 +118,24 @@ class ApprovalStore:
     def register_proposal(self, proposal_id: str, payload_hash: str, fingerprint: str,
                           environment: str) -> Registration:
         reg = Registration(proposal_id, payload_hash, fingerprint, environment)
-        existing = self.registration(proposal_id)
-        if existing is not None:
-            if existing != reg:
-                raise ValueError(f"proposal {proposal_id} is already registered differently")
-            return existing
-        with self._lock, self._conn:
-            self._conn.execute("INSERT INTO registered_proposals VALUES (?, ?, ?, ?, ?)",
-                               (proposal_id, payload_hash, fingerprint, environment,
-                                self._clock().isoformat()))
+        with self._lock:  # check and insert as one step: no race between two registrations
+            row = self._conn.execute(
+                "SELECT proposal_id, payload_hash, fingerprint, environment "
+                "FROM registered_proposals WHERE proposal_id = ?", (proposal_id,)).fetchone()
+            if row is not None:
+                if Registration(*row) != reg:
+                    raise RegistrationConflict(
+                        f"proposal {proposal_id} is already registered differently")
+                return reg
+            try:
+                with self._conn:
+                    self._conn.execute(
+                        "INSERT INTO registered_proposals VALUES (?, ?, ?, ?, ?)",
+                        (proposal_id, payload_hash, fingerprint, environment,
+                         self._clock().isoformat()))
+            except sqlite3.IntegrityError:  # another process got there first
+                raise RegistrationConflict(
+                    f"proposal {proposal_id} is already registered") from None
         return reg
 
     def registration(self, proposal_id: str) -> Registration | None:

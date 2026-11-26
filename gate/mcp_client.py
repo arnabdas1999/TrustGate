@@ -53,7 +53,7 @@ class ToolResult:
 
 
 class McpClient:
-    def __init__(self, url: str, api_key: str, *, timeout: float = 30.0, read_retries: int = 2,
+    def __init__(self, url: str, api_key: str, *, timeout: float = 10.0, read_retries: int = 2,
                  backoff_s: float = 0.5, client: httpx.Client | None = None):
         if not api_key:
             raise McpError("FLAGSMITH_API_KEY is not set")

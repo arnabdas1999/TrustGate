@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 from contracts.hashing import payload_hash
 from contracts.models import Approval, WriteOp
 from gate.allowlist import ReadKind, ToolDenied, check_read
-from gate.approvals import ApprovalRefused, ApprovalStore
+from gate.approvals import ApprovalRefused, ApprovalStore, RegistrationConflict
 from gate.audit_log import AuditLog, merge_versions
 from gate.executor import Executor, StaleState, WriteFailed
 from gate.fingerprint import FingerprintError, canonical_view, fetch_environment_document
@@ -106,13 +106,16 @@ class GateDeps:
     settle_reads: int = 8  # after a write, read the edge document up to this many times
     settle_interval_s: float = 1.0
     sleep: Callable[[float], None] = time.sleep
+    monotonic: Callable[[], float] = time.monotonic
+    settle_budget_s: float = 10.0  # wall-clock cap for settle loops (register and write)
 
     @classmethod
     def from_settings(cls, s: GateSettings) -> GateDeps:
         mcp = McpClient(s.mcp_url, s.api_key)
 
         def document(environment: str) -> dict[str, Any]:
-            doc = fetch_environment_document(s.server_keys[environment])
+            # Short timeout: these reads run inside settle loops with a ~10 s budget.
+            doc = fetch_environment_document(s.server_keys[environment], timeout=4.0)
             if doc.get("id") != s.scope.environments[environment]:
                 raise FingerprintError(f"the server key for {environment} belongs to "
                                        "another environment")
@@ -149,15 +152,18 @@ def _environment_name(scope: GateScope, value: Any) -> str:
 
 
 def _settled(d: GateDeps, environment: str, attempts: int = 6) -> str:
-    """Two equal reads in a row: the edge document lags writes by a few seconds."""
+    """Two equal reads in a row (the edge document lags writes by a few seconds), within the
+    settle time budget so /gate/register answers well inside callers' 30 s timeouts."""
+    deadline = d.monotonic() + d.settle_budget_s
     previous = None
-    for attempt in range(attempts):
+    for _ in range(attempts):
         current = d.fingerprint(environment)
         if current == previous:
             return current
         previous = current
-        if attempt + 1 < attempts:
-            d.sleep(1.0)
+        if d.monotonic() + 1.0 >= deadline:
+            break
+        d.sleep(1.0)
     raise FingerprintError(f"{environment} did not settle; try again shortly")
 
 
@@ -167,9 +173,18 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
         settings = settings or GateSettings.from_env()
         if settings.configured:
             deps = GateDeps.from_settings(settings)
-    token = shared_token if shared_token is not None else os.environ.get("GATE_SHARED_TOKEN", "")
+    if shared_token is None:  # from the environment: set-but-blank is a mistake, not "off"
+        raw = os.environ.get("GATE_SHARED_TOKEN")
+        token = (raw or "").strip()
+        auth_mode = "off" if raw is None else ("token" if token else "misconfigured")
+    else:
+        token = shared_token.strip()
+        auth_mode = "token" if token else "off"
 
     def authorised(authorization: str = Header(default="")) -> None:
+        if auth_mode == "misconfigured":
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE,
+                                "GATE_SHARED_TOKEN is set but empty; refusing to run open")
         if token and not hmac.compare_digest(authorization.encode(),
                                              f"Bearer {token}".encode()):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "gate token required")
@@ -186,7 +201,8 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
 
     @app.get("/health")
     def health() -> dict[str, str]:
-        return {"status": "ok", "mode": "live" if app.state.deps else "unconfigured"}
+        return {"status": "ok", "mode": "live" if app.state.deps else "unconfigured",
+                "auth": auth_mode}
 
     @app.post("/gate/read", dependencies=[Depends(authorised)])
     def read(req: ReadRequest) -> dict[str, Any]:
@@ -229,7 +245,8 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
         executor = Executor(approvals=d.approvals, scope=d.scope, ids=d.ids, mcp=d.mcp,
                             fingerprint=d.fingerprint, audit=d.audit,
                             settle_reads=d.settle_reads, settle_interval_s=d.settle_interval_s,
-                            sleep=d.sleep)
+                            sleep=d.sleep, monotonic=d.monotonic,
+                            settle_budget_s=d.settle_budget_s)
         try:
             return executor.execute(req.approval, req.ops, req.fingerprint).to_dict()
         except ApprovalRefused as exc:
@@ -258,12 +275,18 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
             calls = render(req.ops, d.scope, d.ids, proposal_id=req.proposal_id,
                            approval_id="<pending>")
         except WriterError as exc:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from None
         return {"calls": [c.to_dict() for c in calls]}
 
     @app.post("/gate/register", dependencies=[Depends(authorised)])
     def register(req: RenderRequest) -> dict[str, Any]:
         d = need()
+
+        def refuse(code: int, detail: str) -> HTTPException:
+            d.audit.append(actor="orchestrator", action="refused", tool="register_proposal",
+                           args={}, result=detail[:300], proposal_id=req.proposal_id)
+            return HTTPException(code, detail)
+
         try:
             calls = render(req.ops, d.scope, d.ids, proposal_id=req.proposal_id,
                            approval_id="<pending>")
@@ -271,12 +294,13 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
             fingerprint = _settled(d, environment)
             ph = payload_hash(req.ops)
             d.approvals.register_proposal(req.proposal_id, ph, fingerprint, environment)
-        except (WriterError, McpError, KeyError, TypeError) as exc:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from None
+        except RegistrationConflict as exc:
+            raise refuse(status.HTTP_409_CONFLICT, str(exc)) from None
         except FingerprintError as exc:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from None
-        except ValueError as exc:  # already registered with a different payload
-            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from None
+            raise refuse(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from None
+        except (WriterError, McpError, KeyError, TypeError, ValueError, IndexError) as exc:
+            raise refuse(status.HTTP_422_UNPROCESSABLE_CONTENT,
+                         f"{type(exc).__name__}: {exc}") from None
         d.audit.append(actor="orchestrator", action="read", tool="register_proposal",
                        args={"environment": environment}, result="registered",
                        proposal_id=req.proposal_id, payload_hash=ph, fingerprint=fingerprint)
@@ -311,7 +335,7 @@ def _audit_log(d: GateDeps, args: dict[str, Any]) -> dict[str, Any]:
                 payload = _json_or_text(result)
                 rows = payload.get("results", []) if isinstance(payload, dict) else []
                 versions += [dict(r, feature=feature) for r in rows]
-    return merge_versions(entries, versions)
+    return merge_versions(entries, versions, known_entries=d.audit.entries())
 
 
 app = create_app()

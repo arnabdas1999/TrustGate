@@ -204,7 +204,8 @@ def test_register_and_read_back_a_proposal(store):
 def test_registration_is_immutable(store):
     store.register_proposal("prop_1", "h" * 64, "f" * 64, "Development")
     store.register_proposal("prop_1", "h" * 64, "f" * 64, "Development")  # same: fine
-    with pytest.raises(ValueError, match="already registered"):
+    from gate.approvals import RegistrationConflict
+    with pytest.raises(RegistrationConflict, match="already registered"):
         store.register_proposal("prop_1", "x" * 64, "f" * 64, "Development")
 
 
@@ -228,3 +229,34 @@ def test_written_over_record_expires_after_the_edge_lag_window(tmp_path):
     clock.now = NOW + timedelta(minutes=3)
     # Flagsmith really is back at that state (e.g. a revert): new proposals may use it.
     assert not store.was_written_over("Development", "f" * 64)
+
+
+def test_concurrent_conflicting_registrations_give_one_winner(store):
+    import threading
+
+    from gate.approvals import RegistrationConflict
+
+    barrier, outcomes = threading.Barrier(2), []
+
+    def register(h):
+        barrier.wait()
+        try:
+            store.register_proposal("prop_r", h * 64, "f" * 64, "Development")
+            outcomes.append("ok")
+        except RegistrationConflict:
+            outcomes.append("conflict")
+
+    threads = [threading.Thread(target=register, args=(h,)) for h in "ab"]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+    assert sorted(outcomes) == ["conflict", "ok"]
+
+
+def test_registration_conflict_is_its_own_error_type(store):
+    from gate.approvals import RegistrationConflict
+
+    store.register_proposal("prop_1", "h" * 64, "f" * 64, "Development")
+    with pytest.raises(RegistrationConflict):
+        store.register_proposal("prop_1", "x" * 64, "f" * 64, "Development")

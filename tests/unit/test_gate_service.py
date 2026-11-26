@@ -74,7 +74,7 @@ def _write_body(ops=None, secret=SECRET, fingerprint=FP):
 
 def test_health(setup):
     client = setup[0]
-    assert client.get("/health").json() == {"status": "ok", "mode": "live"}
+    assert client.get("/health").json()["mode"] == "live"
 
 
 def test_unconfigured_gate_starts_and_answers_503():
@@ -265,3 +265,103 @@ def test_non_numeric_project_id_leaves_the_gate_unconfigured():
                                "GATE_PROJECT_ID": "OpsPilot", "GATE_ENVIRONMENTS": "Dev:1",
                                "GATE_SERVER_KEY_DEV": "ser.x"})
     assert not s.configured and "GATE_PROJECT_ID" in s.missing
+
+
+# --- second review --------------------------------------------------------------------------
+
+
+def _deps(tmp_path, **kw):
+    base = dict(scope=SCOPE, mcp=FakeMcp(), ids=IDS,
+                approvals=ApprovalStore(tmp_path / "a.db", secret=SECRET, scope=SCOPE),
+                audit=AuditLog(tmp_path / "audit.jsonl"), fingerprint=lambda env: FP,
+                document=lambda env: DOC, settle_reads=1, sleep=lambda s: None)
+    base.update(kw)
+    return GateDeps(**base)
+
+
+def test_health_shows_the_auth_mode(tmp_path, monkeypatch):
+    monkeypatch.delenv("GATE_SHARED_TOKEN", raising=False)
+    assert TestClient(create_app(_deps(tmp_path))).get("/health").json()["auth"] == "off"
+    assert TestClient(create_app(_deps(tmp_path), shared_token="t")).get(
+        "/health").json()["auth"] == "token"
+
+
+def test_set_but_empty_token_is_a_config_error_not_open_access(tmp_path, monkeypatch):
+    monkeypatch.setenv("GATE_SHARED_TOKEN", "  ")
+    client = TestClient(create_app(_deps(tmp_path)))
+    assert client.get("/health").json()["auth"] == "misconfigured"
+    assert client.get("/gate/audit").status_code == 503
+
+
+def test_register_conflict_is_409_and_audited(setup):
+    client, _, _, deps = setup
+    _register(client)
+    other = [WriteOp(tool="create_segment_override", project="OpsPilot",
+                     environment="Development", feature="agent_prompt_version",
+                     segment="tier0_production", value="v2_fast")]
+    r = client.post("/gate/register", json={"proposal_id": "prop_1",
+                                            "ops": [o.model_dump(mode="json") for o in other]})
+    assert r.status_code == 409
+    last = deps.audit.entries()[-1]
+    assert last["action"] == "refused" and last["tool"] == "register_proposal"
+
+
+def test_other_value_errors_in_register_are_not_reported_as_conflicts(tmp_path, monkeypatch):
+    deps = _deps(tmp_path)
+
+    def broken(*a, **k):
+        raise ValueError("something else")
+
+    monkeypatch.setattr(deps.approvals, "register_proposal", broken)
+    r = TestClient(create_app(deps, shared_token="")).post(
+        "/gate/register", json={"proposal_id": "p", "ops": [o.model_dump(mode="json")
+                                                            for o in _ops()]})
+    assert r.status_code == 422
+
+
+def test_register_settle_has_a_time_budget(tmp_path):
+    clock = {"t": 0.0}
+    n = {"i": 0}
+
+    def drifting(env):  # never two equal reads in a row, and each read takes 3 s
+        clock["t"] += 3.0
+        n["i"] += 1
+        return f"{n['i']:064d}"
+
+    deps = _deps(tmp_path, fingerprint=drifting,
+                 sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+                 monotonic=lambda: clock["t"])
+    r = TestClient(create_app(deps, shared_token="")).post(
+        "/gate/register", json={"proposal_id": "p", "ops": [o.model_dump(mode="json")
+                                                            for o in _ops()]})
+    assert r.status_code == 503 and clock["t"] <= 10.0 + 3.0 + 1.0
+
+
+def test_gate_documents_use_a_short_edge_timeout(monkeypatch, tmp_path):
+    import gate.service as service
+
+    seen = {}
+
+    def fake_fetch(key, **kw):
+        seen.update(kw)
+        return {"id": 121197, "feature_states": []}
+
+    monkeypatch.setattr(service, "fetch_environment_document", fake_fetch)
+    s = GateSettings.from_env({"FLAGSMITH_API_KEY": "pre.fix", "APPROVAL_SIGNING_SECRET": "s",
+                               "GATE_PROJECT_ID": "56664",
+                               "GATE_ENVIRONMENTS": "Development:121197",
+                               "GATE_SERVER_KEY_DEVELOPMENT": "ser.x",
+                               "GATE_DB_PATH": str(tmp_path / "a.db"),
+                               "GATE_AUDIT_PATH": str(tmp_path / "audit.jsonl")})
+    GateDeps.from_settings(s).document("Development")
+    assert seen.get("timeout", 99) <= 5
+
+
+def test_filtered_audit_log_still_recognises_our_other_writes(setup):
+    client, _, _, deps = setup
+    deps.audit.append(actor="executor", action="write", tool="x", args={}, result="applied",
+                      proposal_id="prop_other", version_uuids=["v-1"])
+    r = client.post("/gate/read", json={"tool": "get_audit_log", "args": {
+        "proposal_id": "prop_1", "environment": "Development",
+        "features": ["agent_prompt_version"]}})
+    assert r.json()["result"]["outside_trustgate"] == []

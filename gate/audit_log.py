@@ -121,11 +121,16 @@ class AuditLog:
             expected = hashlib.sha256(line.strip().encode()).hexdigest()
 
 
-def merge_versions(entries: list[dict[str, Any]],
-                   versions: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Attach Flagsmith's live_from to gate writes; list versions TrustGate did not make."""
+def merge_versions(entries: list[dict[str, Any]], versions: list[dict[str, Any]], *,
+                   known_entries: list[dict[str, Any]] | None = None,
+                   ) -> dict[str, list[dict[str, Any]]]:
+    """Attach Flagsmith's live_from to gate writes; list versions TrustGate did not make.
+
+    `entries` may be filtered (e.g. one proposal); `known_entries` should be the whole log,
+    so writes for other proposals are still recognised as TrustGate's.
+    """
     by_uuid = {v.get("uuid"): v for v in versions}
-    ours = set()
+    ours = {u for e in (known_entries or []) for u in (e.get("version_uuids") or [])}
     merged = []
     for entry in entries:
         entry = dict(entry)
