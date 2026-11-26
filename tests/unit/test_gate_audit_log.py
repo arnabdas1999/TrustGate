@@ -116,3 +116,42 @@ def test_merge_versions_adds_flagsmith_when(log):
     assert merged["outside_trustgate"] == [
         {"uuid": "v-0", "live_from": "2026-11-26T17:58:14Z", "created_by": 73517,
          "description": None}]
+
+
+def test_half_written_last_line_is_skipped(log, tmp_path):
+    _write(log)
+    with (tmp_path / "audit.jsonl").open("a") as fh:
+        fh.write('{"ts": "2026-11-26T18:00:09Z", "actor": "exec')  # crash mid-write
+    assert len(log.entries()) == 1
+    fresh = AuditLog(tmp_path / "audit.jsonl")  # a restarted gate keeps appending safely
+    _write(fresh)
+    assert len(fresh.entries()) == 2
+    fresh.verify_chain()
+
+
+def test_last_hash_is_cached_not_reread(log, monkeypatch):
+    _write(log)
+    reads = []
+    real_open = type(log.path).open
+
+    def counting_open(self, mode="r", *a, **k):
+        if "r" in mode:
+            reads.append(mode)
+        return real_open(self, mode, *a, **k)
+
+    monkeypatch.setattr(type(log.path), "open", counting_open)
+    _write(log)
+    _write(log)
+    assert reads == []
+    log.verify_chain()
+
+
+def test_merge_versions_trusts_only_the_gates_own_uuids(log):
+    _write(log)  # the gate wrote version v-1
+    versions = [
+        {"uuid": "v-1", "live_from": "t1", "description": "trustgate proposal=prop_1"},
+        # Someone else labelled their change "trustgate ...": still outside TrustGate.
+        {"uuid": "v-evil", "live_from": "t2", "description": "trustgate proposal=prop_9"},
+    ]
+    merged = merge_versions(log.entries(), versions)
+    assert [v["uuid"] for v in merged["outside_trustgate"]] == ["v-evil"]

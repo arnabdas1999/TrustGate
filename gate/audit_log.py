@@ -6,7 +6,11 @@ each carries `prev_hash` (SHA-256 of the previous line), so an edited or deleted
 
 Flagsmith's own audit log is empty on our plan, and v2 feature versions record no author for
 API-key writes. So this file is the record of who approved what; `merge_versions` adds
-Flagsmith's "when" (the version's live_from), matched by version uuid.
+Flagsmith's "when" (the version's live_from), matched by version uuid. A version counts as
+TrustGate's only if its uuid is in this log: descriptions are free text anyone can write.
+
+One AuditLog instance owns the file per process (the gate service). It keeps the last line's
+hash in memory, so appending never re-reads the file.
 """
 
 from __future__ import annotations
@@ -43,6 +47,15 @@ def _mask(value: Any) -> Any:
     return value
 
 
+def _parses(line: str) -> bool:
+    if not line.strip():
+        return False
+    try:
+        return isinstance(json.loads(line), dict)
+    except ValueError:
+        return False
+
+
 def _ts(dt: datetime) -> str:
     return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S") + (
         f".{dt.microsecond:06d}Z" if dt.microsecond else "Z")
@@ -55,15 +68,20 @@ class AuditLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._clock = clock
         self._lock = threading.Lock()
+        self._last: str | None = None  # hash of the last complete line, once known
 
-    def _last_hash(self) -> str:
+    def _load_last_hash(self) -> str:
+        """Read the file once: hash of the last complete line, ending any half-written one."""
         if not self.path.exists():
             return GENESIS
+        raw = self.path.read_bytes()
+        if raw and not raw.endswith(b"\n"):
+            with self.path.open("ab") as fh:  # a crash mid-write: close that line off
+                fh.write(b"\n")
         last = ""
-        with self.path.open("rb") as fh:
-            for line in fh:
-                if line.strip():
-                    last = line.strip().decode()
+        for line in raw.decode("utf-8", "replace").splitlines():
+            if _parses(line):
+                last = line.strip()
         return hashlib.sha256(last.encode()).hexdigest() if last else GENESIS
 
     def append(self, *, actor: str, action: str, tool: str | None, args: dict[str, Any],
@@ -71,21 +89,24 @@ class AuditLog:
         if action not in ACTIONS:
             raise ValueError(f"unknown audit action {action!r}")
         with self._lock:
+            if self._last is None:
+                self._last = self._load_last_hash()
             entry = {"ts": _ts(self._clock()), "actor": actor, "action": action, "tool": tool,
                      "args": _mask(args), "result": _mask(result), "proposal_id": proposal_id,
-                     **_mask(extra), "prev_hash": self._last_hash()}
+                     **_mask(extra), "prev_hash": self._last}
             line = json.dumps(entry, sort_keys=True, separators=(",", ":"), default=str)
             with self.path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
                 fh.flush()
                 os.fsync(fh.fileno())
+            self._last = hashlib.sha256(line.encode()).hexdigest()
         return entry
 
     def entries(self, proposal_id: str | None = None) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
         rows = [json.loads(line) for line in self.path.read_text("utf-8").splitlines()
-                if line.strip()]
+                if _parses(line)]  # a half-written last line is skipped
         return [r for r in rows if proposal_id is None or r.get("proposal_id") == proposal_id]
 
     def verify_chain(self) -> None:
@@ -93,7 +114,7 @@ class AuditLog:
             return
         expected = GENESIS
         for n, line in enumerate(self.path.read_text("utf-8").splitlines(), start=1):
-            if not line.strip():
+            if not _parses(line):  # blank, or a line cut off by a crash
                 continue
             if json.loads(line).get("prev_hash") != expected:
                 raise AuditTampered(f"audit line {n} does not follow line {n - 1}")
@@ -114,7 +135,6 @@ def merge_versions(entries: list[dict[str, Any]],
                                             if u in by_uuid]
             ours.update(uuids)
         merged.append(entry)
-    outside = [v for v in versions
-               if v.get("uuid") not in ours
-               and not str(v.get("description") or "").startswith("trustgate ")]
+    # Only uuids the gate itself recorded count as TrustGate's; descriptions are untrusted.
+    outside = [v for v in versions if v.get("uuid") not in ours]
     return {"gate": merged, "outside_trustgate": outside}
