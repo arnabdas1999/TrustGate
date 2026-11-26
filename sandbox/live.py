@@ -73,6 +73,11 @@ def resolve(client: ClientLike, identity: Identity) -> tuple[FlagConfig, list[st
     return FlagConfig(values=values, source=ConfigSource.CAPTURED), defaulted
 
 
+def snapshot_ref(path: str) -> str:
+    """The orchestrator's reference form: "file:<path>" (gate: refs pass through)."""
+    return path if path.startswith(("file:", "gate:")) else f"file:{path}"
+
+
 def capture(adapter: SqliteDomain, case_id: str, identity: Identity, resolved: FlagConfig,
             trace: Trace, db_path: Path, *, baseline_snapshot: str, release_snapshot: str,
             out_dir: Path = INCIDENTS_DIR) -> Incident:
@@ -82,7 +87,8 @@ def capture(adapter: SqliteDomain, case_id: str, identity: Identity, resolved: F
     shutil.copyfile(db_path, db_copy)
     incident = Incident(id=incident_id, domain=adapter.domain, case_id=case_id,
                         identity=identity, resolved_flags=resolved,
-                        baseline_snapshot=baseline_snapshot, release_snapshot=release_snapshot,
+                        baseline_snapshot=snapshot_ref(baseline_snapshot),
+                        release_snapshot=snapshot_ref(release_snapshot),
                         db_snapshot=str(db_copy), trace=trace, created_at=datetime.now(UTC))
     (out_dir / f"{incident_id}.json").write_text(incident.model_dump_json(indent=2),
                                                  encoding="utf-8")

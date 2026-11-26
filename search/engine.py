@@ -15,6 +15,7 @@ Flagsmith is never touched, and the model under test is never swapped.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from itertools import count
 
 from agent.triage import triage
@@ -27,7 +28,8 @@ from contracts.models import (
     TestOutcome,
     TestPhase,
 )
-from orchestrator.search_port import SearchOutcome, SearchResult
+from orchestrator.search_port import SearchOutcome, SearchResult, SearchUnavailable
+from sandbox import llm
 from sandbox.adapter import TargetAppAdapter
 from sandbox.flags import SEGMENTS
 from sandbox.runner import run_batch_sync
@@ -37,6 +39,8 @@ from search.repair import CostRef, HeldOut, revert, validate
 from search.testing import Observation, Oracle, Tester
 
 MAX_CONFIRM_ROUNDS = 4
+# A pair culprit validates per-flag options first, so it needs more than the plan's 120-160.
+MAX_RUNS = 240
 
 
 def apply_subset(captured: dict, suspects: Sequence[FlagChange],
@@ -78,7 +82,7 @@ class SandboxSearch:
 
     def __init__(self, oracle_factory: Callable[[Incident], Oracle] | None = None, *,
                  heldout_cases: Callable[[Incident], list[str]] | None = None,
-                 max_runs: int = 160, max_usd: float = 5.0, stop_at_first: bool = True):
+                 max_runs: int = MAX_RUNS, max_usd: float = 5.0, stop_at_first: bool = True):
         self.oracle_factory = oracle_factory or _sandbox_oracle
         self.heldout_cases = heldout_cases or _sandbox_heldout
         self.max_runs, self.max_usd, self.stop_at_first = max_runs, max_usd, stop_at_first
@@ -89,10 +93,13 @@ class SandboxSearch:
         tester = Tester(self.oracle_factory(incident), Budget(self.max_runs, self.max_usd))
         captured = dict(incident.resolved_flags.values)
 
+        found_at: list[datetime] = []
+
         def done(outcome: SearchOutcome, culprit=(), candidates=()) -> SearchResult:
             return SearchResult(outcome=outcome, culprit_set=list(culprit), steps=tester.steps,
                                 candidates=list(candidates), runs_used=tester.budget.runs,
-                                usd_used=tester.usd)
+                                usd_used=tester.usd,
+                                culprit_found_at=found_at[0] if found_at else None)
 
         if not suspects:
             return done(SearchOutcome.NOT_REPRODUCIBLE)
@@ -135,6 +142,7 @@ class SandboxSearch:
                     break
             if smaller is None:
                 culprit = found
+                found_at.append(datetime.now(UTC))
                 break
             current = smaller
         if culprit is None:
@@ -169,7 +177,16 @@ def _adapter(domain: str) -> TargetAppAdapter:
 
 
 def _sandbox_oracle(incident: Incident) -> Oracle:
-    return SandboxOracle(_adapter(incident.domain), incident)
+    """Refuses up front when no replay could run (no key, unknown provider or model), so the
+    budget isn't spent on errored runs before an INCONCLUSIVE."""
+    adapter = _adapter(incident.domain)
+    try:
+        adapter.provider  # noqa: B018 (builds the provider from the environment)
+        for flag in ("model_cheap", "model_flagship"):
+            llm.model_id(flag, getattr(adapter, "env", None))
+    except llm.LLMError as exc:
+        raise SearchUnavailable(f"sandbox can't replay: {exc}") from None
+    return SandboxOracle(adapter, incident)
 
 
 def _sandbox_heldout(incident: Incident) -> list[str]:

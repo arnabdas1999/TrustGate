@@ -317,3 +317,50 @@ def test_global_rollback_for_bench(ops):
 
 def test_release_config_helper_is_captured():
     assert release_config().source == "captured"
+
+
+# -- review asks (Naman, board #148) ---------------------------------------------------------
+
+
+def test_baseline_failing_heldout_lets_no_repair_through():
+    # every held-out case fails on baseline too: the comparison means nothing, so refuse
+    result = synthetic_engine(prompt_fast, heldout_fails=lambda v, c: True).run(
+        incident(), SUSPECTS, InvestigationMode.PLAIN)
+    assert result.outcome is SearchOutcome.FOUND
+    assert choose_candidate(result.candidates) is None
+    assert all(c.validation is None or c.validation.outcome is U for c in result.candidates)
+
+
+def test_heldout_stops_early_once_hopeless():
+    result = synthetic_engine(prompt_fast, heldout_fails=lambda v, c: prompt_fast(v)).run(
+        incident(), SUSPECTS, InvestigationMode.PLAIN)
+    seg = result.candidates[0]
+    assert seg.heldout_runs == 3  # first held-out case missed 3 of 3: no need for the second
+
+
+def test_search_unavailable_without_llm(monkeypatch):
+    from orchestrator.search_port import SearchUnavailable
+    from search import engine
+
+    monkeypatch.setattr(engine, "_ADAPTERS", {})
+    for var in ("LLM_API_KEY", "MODEL_CHEAP", "MODEL_FLAGSHIP"):
+        monkeypatch.delenv(var, raising=False)
+    with pytest.raises(SearchUnavailable):
+        SandboxSearch().run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+
+
+def test_culprit_found_at_and_per_flag_ops():
+    result = synthetic_engine(prompt_fast).run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+    assert result.culprit_found_at is not None
+    best = choose_candidate(result.candidates)
+    assert [(o.tool, o.feature, o.segment, o.value) for o in best.ops] == [
+        ("create_segment_override", "agent_prompt_version", "tier0_production", "v1_strict")]
+
+
+def test_live_writes_file_refs():
+    from sandbox.live import snapshot_ref
+
+    assert snapshot_ref("data/b.json") == "file:data/b.json"
+    assert snapshot_ref(r"C:\x\b.json") == r"file:C:\x\b.json"
+    assert snapshot_ref("gate:Development") == "gate:Development"
+    assert snapshot_ref("file:a.json") == "file:a.json"

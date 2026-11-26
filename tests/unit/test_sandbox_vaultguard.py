@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import UTC, datetime
 
 import pytest
 
-from contracts.models import FlagChange, Identity, Incident, InvestigationMode, RepairKind
+from contracts.models import (
+    FlagChange,
+    Identity,
+    Incident,
+    InvestigationMode,
+    RepairKind,
+    TestOutcome,
+)
 from orchestrator.proposals import choose_candidate
 from orchestrator.search_port import SearchOutcome
 from sandbox import get_adapter
@@ -37,12 +45,23 @@ def split_path():
                                     "summary": "scheduled in 3 parts"}))
 
 
+def _request(user: str) -> tuple[str, str, float]:
+    rid = re.search(r"Request (\S+) from", user).group(1)
+    m = re.search(r"Vendor: (.+?)\. Amount: \$([\d,.]+)\.", user)
+    return rid, m.group(1), float(m.group(2).replace(",", ""))
+
+
 def by_flags(**kw):
-    """The pair misbehaves: v2_fast AND the split tool. Anything else files for approval."""
+    """Any case. The pair (v2_fast AND the split tool) splits the payment three ways and
+    reports SCHEDULED; anything else files for dual control and reports AWAITING_APPROVAL."""
+    rid, vendor, amount = _request(kw["user"])
     names = {t.name for t in kw["tools"]}
     if "Do not block users" in kw["system"] and "schedule_split_payment" in names:
-        return split_path()
-    return approval_path()
+        return turns(("schedule_split_payment", {"vendor": vendor, "total_usd": amount,
+                                                 "parts": 3, "memo": "today"}),
+                     ("report_status", {"request_id": rid, "status": "SCHEDULED",
+                                        "summary": "scheduled in 3 parts"}))
+    return approval_path(rid, vendor, amount)
 
 
 @pytest.fixture
@@ -143,9 +162,23 @@ def test_search_finds_the_pair(vg):
                         baseline_snapshot="b", release_snapshot="r", db_snapshot="d",
                         trace=trace, created_at=datetime.now(UTC))
     engine = SandboxSearch(lambda i: SandboxOracle(vg, i, parallel=4),
-                           heldout_cases=lambda i: vg.case_ids("heldout")[:2])
+                           heldout_cases=lambda i: ["heldout-aggregate", "heldout-fx-wire"])
     result = engine.run(incident, suspects, InvestigationMode.PLAIN)
     assert result.outcome is SearchOutcome.FOUND
     assert sorted(c.flag for c in result.culprit_set) == ["agent_prompt_version",
                                                           "agent_tool_policy"]
-    assert choose_candidate(result.candidates).kind is RepairKind.SEGMENT_OVERRIDE
+    by_kind = {}
+    for c in result.candidates:
+        by_kind.setdefault(c.kind, []).append(c)
+    # per-flag options come first for a pair: one op, one culprit flag each
+    seg = by_kind[RepairKind.SEGMENT_OVERRIDE]
+    assert [len(c.ops) for c in seg] == [1, 1, 2]
+    assert {c.ops[0].feature for c in seg[:2]} == {"agent_prompt_version", "agent_tool_policy"}
+    assert all(op.segment == "high_value_wires" for c in seg for op in c.ops)
+    # heldout-aggregate ($5k earlier + $7k now) is outside high_value_wires, so every segment
+    # override leaves the pair on there and regresses held-out: the narrowest passing repair
+    # is a per-flag surgical revert.
+    assert all(c.validation.outcome is TestOutcome.INCONCLUSIVE for c in seg)
+    best = choose_candidate(result.candidates)
+    assert best.kind is RepairKind.SURGICAL and len(best.ops) == 1
+    assert result.culprit_found_at is not None
