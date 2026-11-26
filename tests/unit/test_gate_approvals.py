@@ -170,6 +170,11 @@ def test_naive_expiry_is_refused(store):
     assert _refusal(store, approval, ops) is Refusal.BAD_REQUEST
 
 
+def test_store_creates_its_folder(tmp_path, clock):
+    ApprovalStore(tmp_path / "data" / "gate" / "a.db", secret=SECRET, scope=SCOPE, clock=clock)
+    assert (tmp_path / "data" / "gate" / "a.db").exists()
+
+
 def test_store_needs_a_secret(tmp_path):
     with pytest.raises(ValueError, match="APPROVAL_SIGNING_SECRET"):
         ApprovalStore(tmp_path / "a.db", secret="", scope=SCOPE)

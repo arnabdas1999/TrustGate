@@ -79,6 +79,7 @@ class ApprovalStore:
         self._scope = scope
         self._clock = clock
         self._lock = threading.Lock()
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         with self._conn:
             self._conn.execute(
