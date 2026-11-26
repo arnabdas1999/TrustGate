@@ -1,7 +1,8 @@
 """Deterministic triage: which Flagsmith segment does the incident's identity belong to?
 
-Evaluates segment rules from the environment document on the incident's trusted traits
-(set by application code, never by users or the LLM). No LLM involved.
+Evaluates segment rules from the environment document (or the gate's canonical view of it)
+on the incident's trusted traits (set by application code, never by users or the LLM).
+No LLM involved.
 
 Semantics follow Flagsmith's segment engine:
 - A segment matches when it has rules and every top-level rule matches.
@@ -115,9 +116,21 @@ def segment_matches(segment: Mapping[str, Any], traits: Mapping[str, TraitValue]
     return bool(rules) and all(_rule(r, traits) for r in rules)
 
 
+def segments_of(document: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """The segment definitions ({name, rules}) from either document shape:
+    - the edge environment document: {"project": {"segments": [{"name", "rules"}, ...]}}
+    - the gate's canonical view (gate.fingerprint.canonical_view):
+      {"features": {...}, "segments": {name: {"rules": [...], "overrides": {...}}}}
+    """
+    segments = document.get("segments")
+    if isinstance(segments, Mapping):
+        return [{"name": name, "rules": (seg or {}).get("rules") or []}
+                for name, seg in segments.items()]
+    return list((document.get("project") or {}).get("segments") or [])
+
+
 def matching_segments(document: Mapping[str, Any], traits: Mapping[str, TraitValue]) -> list[str]:
-    segments = (document.get("project") or {}).get("segments") or []
-    return sorted(s["name"] for s in segments if segment_matches(s, traits))
+    return sorted(s["name"] for s in segments_of(document) if segment_matches(s, traits))
 
 
 def triage(document: Mapping[str, Any], traits: Mapping[str, TraitValue]) -> str | None:

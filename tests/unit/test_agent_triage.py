@@ -113,3 +113,33 @@ def test_triage_returns_the_single_match_or_explains():
 def test_traits_must_be_a_dict_of_plain_values():
     with pytest.raises(TriageError):
         triage({"project": {"segments": [TIER0]}}, {"env": {"nested": 1}})
+
+
+def _with_ids(rule, start=1):
+    """An edge-document rule: ids on rules and conditions, as Flagsmith sends them."""
+    return {**rule, "id": start,
+            "conditions": [{**c, "id": start * 10 + i} for i, c in enumerate(rule["conditions"])],
+            "rules": [_with_ids(r, start * 10 + i) for i, r in enumerate(rule["rules"])]}
+
+
+def test_triage_reads_the_gate_canonical_view():
+    from gate.fingerprint import canonical_view
+
+    doc = {"id": 1, "name": "Demo Production",
+           "feature_states": [{"enabled": True, "feature": {"name": "agent_model"},
+                               "feature_state_value": "model_cheap"}],
+           "project": {"segments": [
+               {"id": 7, "name": seg["name"], "rules": [_with_ids(r) for r in seg["rules"]],
+                "feature_states": []} for seg in (TIER0, HIGH_VALUE)]}}
+    view = canonical_view(doc)
+    assert isinstance(view["segments"], dict) and "project" not in view
+    assert triage(view, {"env": "prod", "tier": 0}) == "tier0_production"
+    assert triage(view, {"env": "prod", "tier": 1}) is None
+    assert triage(view, {"env": "staging", "tier": 0}) is None
+    assert matching_segments(view, {"amount_usd": 20000}) == ["high_value_wires"]
+    # the same document, unconverted, gives the same answers
+    assert triage(doc, {"env": "prod", "tier": 0}) == "tier0_production"
+
+
+def test_canonical_view_without_segments_matches_nothing():
+    assert matching_segments({"features": {}, "segments": {}}, {"env": "prod", "tier": 0}) == []
