@@ -34,6 +34,7 @@ from contracts import (
     sign_approval,
 )
 from orchestrator.gate_client import GateClient, GateError
+from orchestrator.wiring import start_in_background, verify_in_background
 
 
 def create_app(mock: bool | None = None) -> FastAPI:
@@ -91,13 +92,14 @@ def create_app(mock: bool | None = None) -> FastAPI:
         incident = db.incidents.get(body.incident_id)
         if incident is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown incident")
-        # TODO(naman): hand off to the orchestrator; it moves the status forward.
         investigation = Investigation(
             id=f"inv_{secrets.token_hex(6)}", incident_id=incident.id, domain=incident.domain,
             mode=body.mode, status=InvestigationStatus.CAPTURING,
             timestamps=Timestamps(alert=datetime.now(UTC)),
         )
         db.investigations[investigation.id] = investigation
+        if not app.state.mock:  # the orchestrator moves the status forward in the background
+            start_in_background(db, investigation.id)
         return investigation
 
     @app.get("/api/investigations", response_model=list[Investigation])
@@ -248,7 +250,9 @@ def _send_to_gate(db: Store, proposal: Proposal, investigation: Investigation, s
     proposal.state = ProposalState.APPLIED
     investigation.status = InvestigationStatus.APPLIED
     investigation.timestamps.approved = now
-    # TODO(naman): trigger the verifier (read-back + fresh runs), then set VERIFIED or FAILED.
+    # Read-back in the background sets VERIFIED, or FAILED plus a rollback proposal.
+    # (Fresh post-write runs join once search/ and sandbox/ land.)
+    verify_in_background(db, investigation.id)
 
 
 app = create_app()
