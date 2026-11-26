@@ -16,9 +16,11 @@ GATE_WRITE = AuditEntry(ts=datetime(2026, 11, 26, 18, 0, 5, tzinfo=UTC), actor="
 
 class FakeGate:
     fail = False
+    instances = 0
 
     def __init__(self, base_url):
         self.base_url = base_url
+        FakeGate.instances += 1
 
     def audit_entries(self, environment=None, features=()):
         if FakeGate.fail:
@@ -38,6 +40,13 @@ def test_audit_reads_the_gate_trail(live_api):
     rows = live_api.get("/api/audit").json()
     assert [r["action"] for r in rows] == ["write"]
     assert rows[0]["tool"] == "create_environment_feature_version"
+
+
+def test_audit_polling_reuses_one_gate_client(live_api):
+    FakeGate.instances = 0
+    for _ in range(3):
+        assert live_api.get("/api/audit").status_code == 200
+    assert FakeGate.instances == 1
 
 
 def test_audit_reports_an_unreachable_gate(live_api):

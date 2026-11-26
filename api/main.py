@@ -163,8 +163,10 @@ def create_app(mock: bool | None = None) -> FastAPI:
         # reject entries. MOCK=1 keeps serving the in-memory fixtures only.
         entries = list(db.audit)
         if not app.state.mock:
+            if getattr(app.state, "gate_client", None) is None:  # one client for all polls
+                app.state.gate_client = GateClient(settings.gate_url())
             try:
-                entries += GateClient(settings.gate_url()).audit_entries()
+                entries += app.state.gate_client.audit_entries()
             except GateError as exc:
                 raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
         return sorted(entries, key=lambda e: e.ts)
