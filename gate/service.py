@@ -4,8 +4,8 @@ The only process that holds the Flagsmith organisation key. Endpoints:
 - POST /gate/read         allowlisted reads: {tool, args}. Default deny, audited.
 - POST /gate/write        {approval, ops, fingerprint}, exactly as api.main._send_to_gate posts.
                           200 applied, 403 refused (reason), 409 stale, 502 write failed.
-- GET  /gate/fingerprint  ?environment=NAME: canonical fingerprint of the edge document.
-- POST /gate/render       {ops, proposal_id}: the exact MCP call(s) a write would send.
+- GET  /gate/fingerprint  ?environment=NAME: canonical fingerprint of the edge document. Audited.
+- POST /gate/render       {ops, proposal_id}: the exact MCP call(s) a write would send. Audited.
 - POST /gate/register     {ops, proposal_id}: record the proposal's payload hash and the gate's
                           OWN settled fingerprint. /gate/write compares against this record,
                           never against a fingerprint the caller sends.
@@ -241,6 +241,11 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
             d.audit.append(actor="investigator", action="read", tool=req.tool, args=req.args,
                            result=f"error: {exc}")
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from None
+        except Exception as exc:  # noqa: BLE001 (malformed reply, redirects, ...): still audited
+            d.audit.append(actor="investigator", action="read", tool=req.tool, args=req.args,
+                           result=f"error: {type(exc).__name__}")
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                                f"read failed: {type(exc).__name__}") from None
         d.audit.append(actor="investigator", action="read", tool=req.tool, args=req.args,
                        result=outcome)
         return {"tool": req.tool, "is_error": outcome == "error", "result": body}
@@ -266,22 +271,44 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
     @app.get("/gate/fingerprint", dependencies=[Depends(authorised)])
     def fingerprint(environment: str) -> dict[str, str]:
         d = need()
+
+        def log(result: str) -> None:
+            d.audit.append(actor="investigator", action="read", tool="get_fingerprint",
+                           args={"environment": environment}, result=result)
+
         try:
             name = _environment_name(d.scope, environment)
-            return {"environment": name, "fingerprint": d.fingerprint(name)}
+            value = d.fingerprint(name)
         except ToolDenied as exc:
+            log(f"refused: {exc}")
             raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc)) from None
-        except FingerprintError as exc:
-            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from None
+        except Exception as exc:  # noqa: BLE001 (FingerprintError or anything else: audited)
+            log(f"error: {type(exc).__name__}")
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                                str(exc) if isinstance(exc, FingerprintError)
+                                else f"fingerprint failed: {type(exc).__name__}") from None
+        log("ok")
+        return {"environment": name, "fingerprint": value}
 
     @app.post("/gate/render", dependencies=[Depends(authorised)])
     def render_calls(req: RenderRequest) -> dict[str, Any]:
         d = need()
+
+        def log(result: str) -> None:  # render resolves ids through MCP reads, so audit it
+            d.audit.append(actor="orchestrator", action="read", tool="render_proposal",
+                           args={}, result=result, proposal_id=req.proposal_id)
+
         try:
             calls = render(req.ops, d.scope, d.ids, proposal_id=req.proposal_id,
                            approval_id="<pending>")
         except WriterError as exc:
+            log(f"refused: {str(exc)[:300]}")
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from None
+        except Exception as exc:  # noqa: BLE001
+            log(f"error: {type(exc).__name__}")
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                                f"render failed: {type(exc).__name__}") from None
+        log("ok")
         return {"calls": [c.to_dict() for c in calls]}
 
     @app.post("/gate/register", dependencies=[Depends(authorised)])
@@ -294,6 +321,9 @@ def create_app(deps: GateDeps | None = None, settings: GateSettings | None = Non
             return HTTPException(code, detail)
 
         try:
+            refresh = getattr(d.ids, "refresh", None)
+            if refresh is not None:  # ids resolved now, not from a cache of an older state
+                refresh()
             calls = render(req.ops, d.scope, d.ids, proposal_id=req.proposal_id,
                            approval_id="<pending>")
             environment = req.ops[0].environment

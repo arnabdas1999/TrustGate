@@ -72,6 +72,8 @@ class McpIdResolver:
     Each table (features, segments) is read in full, following pagination, the first time it
     is needed. A name missing from the cache reloads that table once (it may be new) before
     the lookup fails. Any bad reply becomes a WriterError, never a raw ValueError or KeyError.
+    /gate/register calls refresh() first, so a segment deleted and recreated under the same
+    name (new id) is resolved again before a proposal is bound to it.
     """
 
     PAGE_SIZE = 100
@@ -82,6 +84,9 @@ class McpIdResolver:
         self._project_id = project_id
         self._features: dict[str, int] | None = None
         self._segments: dict[str, int] | None = None
+
+    def refresh(self) -> None:
+        self._features = self._segments = None
 
     def _load(self, tool: str) -> dict[str, int]:
         table: dict[str, int] = {}

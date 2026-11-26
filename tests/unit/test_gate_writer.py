@@ -282,3 +282,13 @@ def test_mcp_resolver_reloads_segments_once_on_a_miss():
         ids.segment_id("never_exists")
     assert mcp.names().count("list_project_segments") == 3
     assert mcp.names().count("list_project_features") <= 1
+
+
+def test_mcp_resolver_refresh_picks_up_a_recreated_segment():
+    mcp = PagedMcp({"list_project_segments": [_page([{"id": 1, "name": "tier0"}], more=False)]})
+    ids = McpIdResolver(mcp, project_id=56664)
+    assert ids.segment_id("tier0") == 1
+    mcp.pages["list_project_segments"] = [_page([{"id": 7, "name": "tier0"}], more=False)]
+    assert ids.segment_id("tier0") == 1  # cached
+    ids.refresh()
+    assert ids.segment_id("tier0") == 7
