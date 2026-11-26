@@ -106,3 +106,61 @@ def test_search_from_env_reads_an_optional_segment():
     engine = search_from_env({"TRUSTGATE_SEARCH": "scripted:agent_prompt_version@high_value_wires"})
     assert engine.culprits == ["agent_prompt_version"] and engine.segment == "high_value_wires"
     assert search_from_env({"TRUSTGATE_SEARCH": "scripted:a"}).segment == "tier0_production"
+
+
+# --- TRUSTGATE_SEARCH=sandbox (Khyati's search/, imported lazily) ------------------------------
+
+import sys  # noqa: E402
+import types  # noqa: E402
+
+
+def test_unset_search_is_unavailable_with_a_reason():
+    engine = search_from_env({})
+    assert isinstance(engine, UnavailableSearch) and "TRUSTGATE_SEARCH" in engine.reason
+    with pytest.raises(SearchUnavailable, match="TRUSTGATE_SEARCH"):
+        engine.run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+
+
+def test_sandbox_without_search_module_is_unavailable_not_a_crash(monkeypatch):
+    monkeypatch.setitem(sys.modules, "search", None)  # makes `import search` fail
+    engine = search_from_env({"TRUSTGATE_SEARCH": "sandbox"})
+    assert isinstance(engine, UnavailableSearch)
+    assert "search/ can't be imported" in engine.reason
+    with pytest.raises(SearchUnavailable, match="can't be imported"):
+        engine.run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+
+
+def test_sandbox_search_module_that_errors_on_import_is_unavailable(monkeypatch):
+    broken = types.ModuleType("search")
+
+    def __getattr__(name):
+        raise RuntimeError("sandbox config missing")
+    broken.__getattr__ = __getattr__
+    monkeypatch.setitem(sys.modules, "search", broken)
+    engine = search_from_env({"TRUSTGATE_SEARCH": "sandbox"})
+    assert isinstance(engine, UnavailableSearch) and "RuntimeError" in engine.reason
+
+
+def test_sandbox_uses_search_sandboxsearch_and_passes_the_order_through(monkeypatch):
+    seen = []
+
+    class FakeSandboxSearch:
+        def run(self, incident, suspects, mode):
+            seen.append(([s.flag for s in suspects], mode))
+            return ScriptedSearch(["agent_prompt_version"]).run(incident, suspects, mode)
+
+    fake = types.ModuleType("search")
+    fake.SandboxSearch = FakeSandboxSearch
+    monkeypatch.setitem(sys.modules, "search", fake)
+    engine = search_from_env({"TRUSTGATE_SEARCH": "sandbox"})
+    assert isinstance(engine, FakeSandboxSearch)
+    ordered = [SUSPECTS[1], SUSPECTS[2], SUSPECTS[0]]
+    result = engine.run(incident(), ordered, InvestigationMode.GUIDED)
+    assert result.outcome is SearchOutcome.FOUND
+    assert seen == [(["agent_prompt_version", "agent_tool_policy", "agent_context_mode"],
+                     InvestigationMode.GUIDED)]
+
+
+def test_unknown_search_value_is_unavailable():
+    engine = search_from_env({"TRUSTGATE_SEARCH": "ddmin-please"})
+    assert isinstance(engine, UnavailableSearch) and "ddmin-please" in engine.reason
