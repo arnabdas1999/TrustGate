@@ -90,6 +90,28 @@ def test_read_in_other_environment_is_refused(args):
         check_read("get_environment_feature_versions", args, SCOPE)
 
 
+def test_list_project_environments_id_is_our_project():
+    assert check_read("list_project_environments", {"id": 56664}, SCOPE) is ReadKind.MCP
+    with pytest.raises(ToolDenied, match="project"):
+        check_read("list_project_environments", {"id": 1}, SCOPE)
+
+
+def test_project_pk_is_checked():
+    with pytest.raises(ToolDenied, match="project"):
+        check_read("list_project_segments", {"project_pk": 2}, SCOPE)
+
+
+def test_version_uuid_is_not_mistaken_for_an_environment():
+    args = {"environment_pk": 121197, "feature_pk": 306127,
+            "environment_feature_version_pk": "e859594d-6933-415e-9cd5-bd0fa7384547"}
+    assert check_read("get_environment_feature_version_states", args, SCOPE) is ReadKind.MCP
+
+
+def test_unknown_scope_like_arguments_are_refused():
+    with pytest.raises(ToolDenied, match="argument"):
+        check_read("list_project_features", {"project_pk": 56664, "projects": [1, 2]}, SCOPE)
+
+
 def test_organisation_arguments_are_refused():
     with pytest.raises(ToolDenied, match="organisation"):
         check_read("list_project_features", {"organisation": 1}, SCOPE)

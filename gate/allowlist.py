@@ -32,6 +32,16 @@ GATE_NATIVE_READS: frozenset[str] = frozenset({"get_audit_log", "get_environment
 MCP_WRITES: frozenset[str] = frozenset({"create_environment_feature_version"})
 
 
+# Argument names (from the MCP tool schemas, Nov 26) that select a project or environment.
+PROJECT_ARGS: frozenset[str] = frozenset({"project", "project_id", "project_pk"})
+ENVIRONMENT_ARGS: frozenset[str] = frozenset({
+    "environment", "environment_id", "environment_pk", "environment_api_key"})
+# Tools whose bare "id" argument is the project id.
+PROJECT_ID_IS_ID: frozenset[str] = frozenset({"list_project_environments"})
+# Contain "environment" but are not environments: a version uuid inside an allowed environment.
+NON_SCOPE_ARGS: frozenset[str] = frozenset({"environment_feature_version_pk"})
+
+
 class ReadKind(StrEnum):
     MCP = "mcp"
     NATIVE = "native"
@@ -58,12 +68,18 @@ def check_read(tool: str, args: dict[str, Any], scope: GateScope) -> ReadKind:
 
     if not isinstance(args, dict):
         raise ToolDenied("read arguments must be an object")
+    project_args = PROJECT_ARGS | ({"id"} if tool in PROJECT_ID_IS_ID else set())
     for key, value in args.items():
         k = key.lower()
         if "organisation" in k or "organization" in k:
             raise ToolDenied(f"{tool}: organisation arguments are not allowed ({key})")
-        if "project" in k and not scope.allows_project(value):
-            raise ToolDenied(f"{tool}: project {value!r} is outside the gate's scope")
-        if "environment" in k and not scope.allows_environment(value):
-            raise ToolDenied(f"{tool}: environment {value!r} is outside the gate's scope")
+        if k in project_args:
+            if not scope.allows_project(value):
+                raise ToolDenied(f"{tool}: project {value!r} is outside the gate's scope")
+        elif k in ENVIRONMENT_ARGS:
+            if not scope.allows_environment(value):
+                raise ToolDenied(f"{tool}: environment {value!r} is outside the gate's scope")
+        elif k not in NON_SCOPE_ARGS and ("project" in k or "environment" in k):
+            # A scope-like name we don't know how to check: refuse rather than guess.
+            raise ToolDenied(f"{tool}: unexpected scope argument {key!r}")
     return kind
