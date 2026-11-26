@@ -1,0 +1,46 @@
+[project]
+name = "trustgate"
+version = "0.1.0"
+description = "Finds which Flagsmith flag change broke an AI agent, then proposes a human-approved, segment-scoped repair."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.8",
+    "httpx>=0.27",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.6",
+    "pre-commit>=3.8",
+]
+
+[tool.uv]
+# The repo root holds several top-level packages (contracts, api, gate, sandbox, ...).
+# Nothing is installed as a package: tests and services run from the repo root.
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "flagsmith: talks to real Flagsmith (run at checkpoints: pytest -m flagsmith)",
+    "llm: makes real LLM calls and spends API credits (run at checkpoints: pytest -m llm)",
+]
+# CI and everyday runs skip the expensive layers.
+addopts = "-m 'not flagsmith and not llm'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["web"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+ignore = ["B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]

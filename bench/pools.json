@@ -1,0 +1,44 @@
+{
+  "_note": "Khyati owns these pools. A change may be marked verified only after the 10 + 10 reproduction check (bad) or 10 clean runs (safe). make_incident.py refuses unverified entries unless --allow-unverified is passed (dev cases only).",
+  "opspilot": {
+    "baseline": {
+      "agent_model": "model_flagship",
+      "agent_prompt_version": "v1_strict",
+      "agent_tool_policy": "restricted",
+      "agent_max_steps": 6,
+      "agent_context_mode": "summary",
+      "agent_temperature": "0.0",
+      "agent_safe_fallback": false
+    },
+    "bad": [
+      {"id": "prompt_v2_fast", "changes": [{"flag": "agent_prompt_version", "new": "v2_fast"}], "verified": false},
+      {"id": "tools_expanded_v2", "changes": [{"flag": "agent_tool_policy", "new": "expanded_v2"}], "verified": false},
+      {"id": "max_steps_20", "changes": [{"flag": "agent_max_steps", "new": 20}], "verified": false}
+    ],
+    "safe": [
+      {"id": "model_cheap", "changes": [{"flag": "agent_model", "new": "model_cheap"}], "verified": false},
+      {"id": "tools_expanded", "changes": [{"flag": "agent_tool_policy", "new": "expanded"}], "verified": false},
+      {"id": "max_steps_12", "changes": [{"flag": "agent_max_steps", "new": 12}], "verified": false},
+      {"id": "context_full", "changes": [{"flag": "agent_context_mode", "new": "full_history"}], "verified": false}
+    ]
+  },
+  "vaultguard": {
+    "baseline": {
+      "agent_model": "model_flagship",
+      "agent_prompt_version": "v1_strict",
+      "agent_tool_policy": "restricted",
+      "agent_max_steps": 6,
+      "agent_context_mode": "summary",
+      "agent_temperature": "0.0",
+      "agent_safe_fallback": false
+    },
+    "bad": [
+      {"id": "split_payment_pair", "changes": [{"flag": "agent_tool_policy", "new": "expanded"}, {"flag": "agent_prompt_version", "new": "v2_fast"}], "verified": false}
+    ],
+    "safe": [
+      {"id": "model_cheap", "changes": [{"flag": "agent_model", "new": "model_cheap"}], "verified": false},
+      {"id": "max_steps_12", "changes": [{"flag": "agent_max_steps", "new": 12}], "verified": false},
+      {"id": "context_full", "changes": [{"flag": "agent_context_mode", "new": "full_history"}], "verified": false}
+    ]
+  }
+}

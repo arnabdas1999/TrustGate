@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+!.env.gate.example
+.venv
+**/__pycache__
+.pytest_cache
+.ruff_cache
+data
+bench/keys/*.json
+web/node_modules
+web/.next

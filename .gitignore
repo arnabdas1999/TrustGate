@@ -1,0 +1,38 @@
+# Secrets: never commit. Only the *.example files are tracked.
+.env
+.env.*
+!.env.example
+!.env.gate.example
+
+# Sealed benchmark answer keys: committed only after the eval runs (hashes.txt is committed now)
+bench/keys/*.json
+
+# Runtime data
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Node / Next.js
+node_modules/
+web/.next/
+web/out/
+web/next-env.d.ts
+*.tsbuildinfo
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
