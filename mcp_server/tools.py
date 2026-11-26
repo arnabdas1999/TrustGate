@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
 import httpx
@@ -70,13 +71,17 @@ class ToolError(Exception):
 
 
 class Backend:
-    """HTTP access to the TrustGate API (investigations) and the gate (reads). No keys."""
+    """HTTP access to the TrustGate API (investigations) and the gate (reads). No Flagsmith
+    keys. Gate calls carry GATE_SHARED_TOKEN as a bearer token when it's set."""
 
     def __init__(self, *, api_url: str, gate_url: str, web_url: str,
-                 client: httpx.Client | None = None):
+                 client: httpx.Client | None = None, gate_token: str | None = None):
         self.api_url, self.gate_url = api_url.rstrip("/"), gate_url.rstrip("/")
         self.web_url = web_url.rstrip("/")
         self._http = client or httpx.Client(timeout=30)
+        token = (os.environ.get("GATE_SHARED_TOKEN", "") if gate_token is None
+                 else gate_token).strip()
+        self._gate_headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     def _json(self, response: httpx.Response, what: str) -> Any:
         if response.status_code >= 400:
@@ -100,7 +105,7 @@ class Backend:
 
     def gate_read(self, tool: str, args: dict[str, Any]) -> Any:
         return self._do("POST", f"{self.gate_url}/gate/read", f"gate read {tool}",
-                        json={"tool": tool, "args": args})
+                        json={"tool": tool, "args": args}, headers=self._gate_headers)
 
 
 def _summary(view: dict[str, Any]) -> dict[str, Any]:

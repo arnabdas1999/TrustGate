@@ -20,7 +20,7 @@ import hmac
 import sqlite3
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
@@ -32,6 +32,9 @@ from gate.scope import GateScope
 MAX_APPROVAL_LIFETIME = timedelta(minutes=15)
 # The edge document lags a write by seconds (seen Nov 26); refuse the replaced state this long.
 WRITTEN_OVER_WINDOW = timedelta(minutes=2)
+# A registered proposal can be approved for this long (the proposal itself expires 15 minutes
+# after it was built, which is never later than its registration).
+REGISTRATION_TTL = timedelta(minutes=15)
 
 
 class Refusal(StrEnum):
@@ -73,6 +76,7 @@ class Registration:
     payload_hash: str
     fingerprint: str
     environment: str
+    registered_at: str | None = field(default=None, compare=False)
 
 
 def _signature_valid(secret: str, approval: Approval) -> bool:
@@ -141,9 +145,16 @@ class ApprovalStore:
     def registration(self, proposal_id: str) -> Registration | None:
         with self._lock:
             row = self._conn.execute(
-                "SELECT proposal_id, payload_hash, fingerprint, environment "
+                "SELECT proposal_id, payload_hash, fingerprint, environment, registered_at "
                 "FROM registered_proposals WHERE proposal_id = ?", (proposal_id,)).fetchone()
         return Registration(*row) if row else None
+
+    def registration_expired(self, reg: Registration) -> bool:
+        """Older than REGISTRATION_TTL on the gate's clock. Rows without a time (older
+        databases) count as expired."""
+        if not reg.registered_at:
+            return True
+        return self._clock() - datetime.fromisoformat(reg.registered_at) >= REGISTRATION_TTL
 
     # -- the state the last write replaced, per environment ----------------------------------
 
@@ -192,7 +203,7 @@ class ApprovalStore:
             raise ApprovalRefused(Refusal.EXPIRY_TOO_FAR,
                                   "expiry is more than 15 minutes ahead of the gate's clock")
 
-        if not hmac.compare_digest(payload_hash(ops), approval.payload_hash):
+        if not hmac.compare_digest(payload_hash(ops).encode(), approval.payload_hash.encode()):
             raise ApprovalRefused(Refusal.PAYLOAD_MISMATCH,
                                   "ops differ from the approved payload")
 

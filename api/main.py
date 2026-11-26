@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hmac
 import secrets
+import threading
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -42,6 +43,7 @@ def create_app(mock: bool | None = None) -> FastAPI:
     app = FastAPI(title="TrustGate API", version="0.1.0")
     app.state.store = seeded(is_mock)
     app.state.mock = is_mock
+    app.state.approve_lock = threading.Lock()
 
     app.add_middleware(
         CORSMiddleware,
@@ -127,11 +129,16 @@ def create_app(mock: bool | None = None) -> FastAPI:
     @app.post("/api/proposals/{proposal_id}/approve", response_model=Proposal)
     def approve(proposal_id: str, db: Store = Depends(store),
                 session: Session = Depends(require_session)) -> Proposal:
-        proposal = _proposal_or_404(db, proposal_id)
-        _expire_if_due(db, proposal)
-        if proposal.state != ProposalState.PROPOSED:
-            raise HTTPException(status.HTTP_409_CONFLICT,
-                                f"proposal is {proposal.state.value}, not proposed")
+        # Check-and-claim under a lock: FastAPI runs sync endpoints in a thread pool, so a
+        # double-click could otherwise send two approvals for one proposal. APPROVED marks the
+        # proposal as in flight; a second request sees it and gets 409.
+        with app.state.approve_lock:
+            proposal = _proposal_or_404(db, proposal_id)
+            _expire_if_due(db, proposal)
+            if proposal.state != ProposalState.PROPOSED:
+                raise HTTPException(status.HTTP_409_CONFLICT,
+                                    f"proposal is {proposal.state.value}, not proposed")
+            proposal.state = ProposalState.APPROVED
         now = datetime.now(UTC)
         investigation = db.investigations[proposal.investigation_id]
         db.audit.append(AuditEntry(ts=now, actor=session.approver, action="approve",
@@ -139,8 +146,15 @@ def create_app(mock: bool | None = None) -> FastAPI:
                                    result=f"payload {proposal.payload_hash[:12]}"))
         if app.state.mock:
             _mock_apply(db, proposal, investigation, now)
-        else:
+            return proposal
+        try:
             _send_to_gate(db, proposal, investigation, session, now)
+        except HTTPException:
+            # Nothing was written (or the outcome is unknown and the gate would refuse a
+            # reused proposal anyway), so let the human try again.
+            if proposal.state == ProposalState.APPROVED:
+                proposal.state = ProposalState.PROPOSED
+            raise
         return proposal
 
     @app.post("/api/proposals/{proposal_id}/reject", response_model=Proposal)
@@ -232,14 +246,27 @@ def _send_to_gate(db: Store, proposal: Proposal, investigation: Investigation, s
         created_at=now, expires_at=expires_at,
     )
     db.approvals[approval_id] = approval
+    token = settings.gate_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         response = httpx.post(
             f"{settings.gate_url()}/gate/write",
             json={"approval": approval.model_dump(mode="json"),
                   "ops": [op.model_dump(mode="json") for op in proposal.candidate.ops],
                   "fingerprint": proposal.fingerprint},
-            timeout=30,
+            headers=headers,
+            timeout=settings.GATE_WRITE_TIMEOUT_S,
         )
+    except httpx.TimeoutException as exc:
+        # The gate may still have written. Its audit trail is the source of truth.
+        outcome = _write_outcome_from_audit(proposal.id)
+        if outcome == "applied":
+            _mark_applied(db, proposal, investigation, now)
+            return
+        detail = ("the gate reported the write failed" if outcome == "failed" else
+                  "the write outcome is unknown; check the gate audit before approving again")
+        raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT,
+                            f"gate timed out: {detail}") from exc
     except httpx.HTTPError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"gate unreachable: {exc}") from exc
     if response.status_code == status.HTTP_409_CONFLICT:
@@ -249,12 +276,32 @@ def _send_to_gate(db: Store, proposal: Proposal, investigation: Investigation, s
     if response.status_code >= 400:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                             f"gate refused the write ({response.status_code}): {response.text}")
+    _mark_applied(db, proposal, investigation, now)
+
+
+def _mark_applied(db: Store, proposal: Proposal, investigation: Investigation,
+                  now: datetime) -> None:
     proposal.state = ProposalState.APPLIED
     investigation.status = InvestigationStatus.APPLIED
-    investigation.timestamps.approved = now
+    # Keep the FIRST approval time: approving a rollback must not overwrite it, or
+    # proposal-to-approve time in the benchmark is wrong.
+    if investigation.timestamps.approved is None:
+        investigation.timestamps.approved = now
     # Read-back in the background sets VERIFIED, or FAILED plus a rollback proposal.
     # (Fresh post-write runs join once search/ and sandbox/ land.)
     verify_in_background(db, investigation.id)
+
+
+def _write_outcome_from_audit(proposal_id: str) -> str | None:
+    """'applied', 'failed', or None when the gate's audit trail has no write for the proposal."""
+    try:
+        entries = GateClient(settings.gate_url()).audit_entries(proposal_id)
+    except GateError:
+        return None
+    for entry in reversed(entries):
+        if entry.action == "write" and entry.proposal_id == proposal_id:
+            return "applied" if (entry.result or "").startswith("applied") else "failed"
+    return None
 
 
 app = create_app()

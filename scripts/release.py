@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 import time
 from collections.abc import Mapping
@@ -248,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", type=Path, default=Path("data/releases"))
     args = ap.parse_args(argv)
 
+    saved: Path | None = None  # the snapshot taken before anything was written
     try:
         # Fail fast before any read; apply_values checks again before it writes.
         check_environment_allowed(args.environment, args.confirm_environment)
@@ -282,8 +284,8 @@ def main(argv: list[str] | None = None) -> int:
         folder = args.out / args.environment / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         folder.mkdir(parents=True, exist_ok=True)
         label = "revert" if args.revert else "release"
-        (folder / f"{'pre_revert' if args.revert else 'baseline'}_env.json").write_text(
-            json.dumps(before, indent=2, sort_keys=True))
+        saved = folder / f"{'pre_revert' if args.revert else 'baseline'}_env.json"
+        saved.write_text(json.dumps(before, indent=2, sort_keys=True))
         uuids = apply_values(api, args.environment, changes, note=f"{label} {folder.name}",
                              confirm=args.confirm_environment, enabled=want_enabled)
         after = _wait_until_shown(api, args.environment, server_key,
@@ -295,9 +297,27 @@ def main(argv: list[str] | None = None) -> int:
              "enabled": want_enabled}, indent=2))
         print(f"{label}: {len(changes)} flags changed; snapshots in {folder}")
         return 0
-    except ReleaseError as exc:
-        print(f"release.py: {exc}", file=sys.stderr)
+    except (ReleaseError, httpx.HTTPError) as exc:
+        detail = str(exc) if isinstance(exc, ReleaseError) else f"Flagsmith call failed: " \
+            f"{type(exc).__name__}: {exc}"
+        print(f"release.py: {detail}", file=sys.stderr)
+        if saved is not None:  # some flags may have changed already
+            print(undo_hint(args, saved), file=sys.stderr)
         return 2
+
+
+def undo_hint(args: argparse.Namespace, saved: Path) -> str:
+    """The exact command that puts the environment back after a half-applied run."""
+    cmd = ["uv", "run", "python", "-m", "scripts.release", "--environment", args.environment]
+    if args.confirm_environment:
+        cmd += ["--confirm-environment", args.confirm_environment]
+    if args.revert:  # a revert failed half-way: run the same revert again
+        cmd += ["--revert", str(args.revert)]
+        lead = "Some flags may already be reverted. To finish the revert, run:"
+    else:
+        cmd += ["--revert", str(saved)]
+        lead = "Some flags may already have changed. To put them back, run:"
+    return f"{lead}\n  {shlex.join(cmd)}\n(wait 30-60 s first if it says Flagsmith is settling)"
 
 
 if __name__ == "__main__":

@@ -387,3 +387,59 @@ def test_register_gives_up_while_the_edge_still_shows_the_written_over_state(tmp
         "/gate/register", json={"proposal_id": "p", "ops": [o.model_dump(mode="json")
                                                             for o in _ops()]})
     assert r.status_code == 503 and "last write" in r.json()["detail"]
+
+
+# --- every Flagsmith-reading endpoint is audited, whatever goes wrong (PR #1 gate item 2) -----
+
+import httpx  # noqa: E402
+
+
+@pytest.mark.parametrize("exc", [ValueError("Expecting value"),  # JSONDecodeError is one
+                                 httpx.TooManyRedirects("too many"), TypeError("not a list")])
+def test_unexpected_read_errors_are_502_and_audited(setup, exc):
+    client, mcp, _, deps = setup
+
+    def broken(name, arguments, *, is_write):
+        raise exc
+    mcp.call_tool = broken
+    r = client.post("/gate/read", json={"tool": "list_project_features",
+                                        "args": {"project_pk": 56664}})
+    assert r.status_code == 502
+    last = deps.audit.entries()[-1]
+    assert last["tool"] == "list_project_features" and last["result"].startswith("error:")
+
+
+def test_fingerprint_reads_are_audited(setup):
+    client, _, fps, deps = setup
+    client.get("/gate/fingerprint", params={"environment": "Development"})
+    assert deps.audit.entries()[-1]["tool"] == "get_fingerprint"
+    assert deps.audit.entries()[-1]["result"] == "ok"
+    client.get("/gate/fingerprint", params={"environment": "Production"})
+    assert deps.audit.entries()[-1]["result"].startswith("refused")
+
+
+def test_fingerprint_crash_is_502_and_audited(setup):
+    client, _, _, deps = setup
+
+    def boom(env):
+        raise httpx.ReadTimeout("slow")
+    deps.fingerprint = boom
+    r = client.get("/gate/fingerprint", params={"environment": "Development"})
+    assert r.status_code == 502 and deps.audit.entries()[-1]["result"] == "error: ReadTimeout"
+
+
+def test_render_is_audited(setup):
+    client, _, _, deps = setup
+    client.post("/gate/render", json={"proposal_id": "prop_1",
+                                      "ops": [o.model_dump(mode="json") for o in _ops()]})
+    last = deps.audit.entries()[-1]
+    assert (last["tool"], last["result"], last["proposal_id"]) == ("render_proposal", "ok",
+                                                                   "prop_1")
+
+
+def test_register_refreshes_cached_ids(setup):
+    client, _, _, deps = setup
+    refreshed = []
+    deps.ids.refresh = lambda: refreshed.append(True)
+    _register(client)
+    assert refreshed == [True]

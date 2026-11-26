@@ -9,6 +9,8 @@ Environment (API container, .env):
 - TRUSTGATE_PROJECT_OPSPILOT / TRUSTGATE_PROJECT_VAULTGUARD: project names (default the domain)
 - FLAGSMITH_SERVER_KEY_<ENV>: a ser. key per environment, for the verifier's read-back
 - TRUSTGATE_SEARCH: "scripted:<flag>,..." for the plumbing demo until search/ lands
+- LLM_PROVIDER=gemini, LLM_API_KEY, MODEL_CHEAP (investigator's model), LLM_LIVE=0 to switch
+  the LLM off (diff order and template explanations)
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from agent.llm import llm_from_env
 from contracts.models import Domain, Identity
 from orchestrator.gate_client import GateClient
 from orchestrator.lifecycle import DomainConfig, Orchestrator
@@ -84,7 +87,8 @@ def orchestrator_for(store: Any, env: Mapping[str, str] | None = None) -> Orches
             _orchestrators[id(store)] = Orchestrator(
                 repo=DictRepo(store), gate=GateClient(e.get("GATE_URL", "http://localhost:8100")),
                 search=search_from_env(e), configs=configs_from_env(e),
-                flag_source=flag_source_from_env(e))
+                flag_source=flag_source_from_env(e), llm=llm_from_env(e),
+                llm_model=e.get("MODEL_CHEAP", ""))
         return _orchestrators[id(store)]
 
 

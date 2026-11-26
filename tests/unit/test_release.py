@@ -334,3 +334,47 @@ def test_main_refuses_an_unconfirmed_environment(run_main):
     fake = FakeFlagsmith(env_id=121198)
     assert run_main(fake, "--environment", "Demo Production") == 2
     assert fake.versions == []
+
+
+class FailsMidRelease(FakeFlagsmith):
+    """Publishes the first two versions, then the network drops."""
+
+    def __call__(self, request):
+        if request.url.path.endswith("/versions/") and len(self.versions) >= 2:
+            raise httpx.ConnectError("connection reset", request=request)
+        return super().__call__(request)
+
+
+def test_main_half_applied_release_prints_the_exact_revert_command(run_main, tmp_path, capsys):
+    fake = FailsMidRelease()
+    assert run_main(fake, "--environment", "Development") == 2
+    assert len(fake.versions) == 2  # half-changed, the case the review raised
+    baseline = next(tmp_path.glob("Development/*/baseline_env.json"))
+    err = capsys.readouterr().err
+    assert "Flagsmith call failed: ConnectError" in err
+    assert ("uv run python -m scripts.release --environment Development --revert "
+            f"{baseline}") in err
+
+    fake.versions.clear()  # the printed command puts every flag back
+    healthy = FakeFlagsmith(values=fake.values, enabled=fake.enabled)
+    assert run_main(healthy, "--environment", "Development", "--revert", str(baseline)) == 0
+    assert healthy.values == BASELINE
+
+
+def test_main_half_applied_revert_says_to_run_the_same_revert(run_main, tmp_path, capsys):
+    base = FakeFlagsmith()
+    assert run_main(base, "--environment", "Development") == 0
+    baseline = next(tmp_path.glob("Development/*/baseline_env.json"))
+    broken = FailsMidRelease(values=base.values)
+    assert run_main(broken, "--environment", "Development", "--revert", str(baseline)) == 2
+    err = capsys.readouterr().err
+    assert "To finish the revert" in err and f"--revert {baseline}" in err
+
+
+def test_main_failure_before_any_write_prints_no_revert_hint(run_main, capsys):
+    class Down(FakeFlagsmith):
+        def __call__(self, request):
+            raise httpx.ConnectError("down", request=request)
+    assert run_main(Down(), "--environment", "Development") == 2
+    err = capsys.readouterr().err
+    assert "Flagsmith call failed" in err and "--revert" not in err
