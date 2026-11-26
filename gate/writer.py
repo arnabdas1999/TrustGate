@@ -67,33 +67,58 @@ def _rows(payload: Any) -> list[dict[str, Any]]:
 
 
 class McpIdResolver:
-    """Resolves names to ids with allowlisted MCP reads on our project, cached per gate run."""
+    """Resolves names to ids with allowlisted MCP reads on our project, cached per gate run.
+
+    Each table (features, segments) is read in full, following pagination, the first time it
+    is needed. A name missing from the cache reloads that table once (it may be new) before
+    the lookup fails. Any bad reply becomes a WriterError, never a raw ValueError or KeyError.
+    """
+
+    PAGE_SIZE = 100
+    MAX_PAGES = 20
 
     def __init__(self, mcp: Any, *, project_id: int):
         self._mcp = mcp
         self._project_id = project_id
-        self._ids: StaticIds | None = None
-        self._segments_loaded = False
+        self._features: dict[str, int] | None = None
+        self._segments: dict[str, int] | None = None
 
     def _load(self, tool: str) -> dict[str, int]:
-        result = self._mcp.call_tool(tool, {"project_pk": self._project_id, "page_size": 100},
-                                     is_write=False)
-        if result.is_error:
-            raise WriterError(f"{tool} failed: {result.text()[:200]}")
-        return {row["name"]: row["id"] for row in _rows(result.json())}
+        table: dict[str, int] = {}
+        for page in range(1, self.MAX_PAGES + 1):
+            arguments: dict[str, Any] = {"project_pk": self._project_id,
+                                         "page_size": self.PAGE_SIZE}
+            if page > 1:
+                arguments["page"] = page
+            result = self._mcp.call_tool(tool, arguments, is_write=False)
+            if result.is_error:
+                raise WriterError(f"{tool} failed: {result.text()[:200]}")
+            try:
+                payload = result.json()
+            except ValueError:
+                raise WriterError(f"{tool} page {page} is not JSON") from None
+            for row in _rows(payload):
+                try:
+                    name, row_id = row["name"], row["id"]
+                except (KeyError, TypeError):
+                    raise WriterError(f"{tool} page {page} has a row without name/id") from None
+                if not isinstance(name, str) or not isinstance(row_id, int) \
+                        or isinstance(row_id, bool):
+                    raise WriterError(f"{tool} page {page} has a malformed row for {name!r}")
+                table[name] = row_id
+            if not (isinstance(payload, dict) and payload.get("next")):
+                return table
+        raise WriterError(f"{tool} has more than {self.MAX_PAGES} pages; refusing to guess ids")
 
     def feature_id(self, name: str) -> int:
-        if self._ids is None:
-            self._ids = StaticIds(features=self._load("list_project_features"))
-        return self._ids.feature_id(name)
+        if self._features is None or name not in self._features:
+            self._features = self._load("list_project_features")
+        return StaticIds(features=self._features).feature_id(name)
 
     def segment_id(self, name: str) -> int:
-        if self._ids is None:
-            self._ids = StaticIds(features=self._load("list_project_features"))
-        if not self._segments_loaded:
-            self._ids.segments = self._load("list_project_segments")
-            self._segments_loaded = True
-        return self._ids.segment_id(name)
+        if self._segments is None or name not in self._segments:
+            self._segments = self._load("list_project_segments")
+        return StaticIds(segments=self._segments).segment_id(name)
 
 
 def _typed_value(value: FlagValue | None, op: WriteOp) -> dict[str, Any]:

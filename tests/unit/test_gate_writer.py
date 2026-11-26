@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from contracts.models import WriteOp
@@ -163,7 +165,6 @@ def test_mcp_resolver_reads_features_and_segments_once():
         def call_tool(self, name, arguments, *, is_write):
             assert is_write is False
             self.calls.append((name, arguments))
-            import json
             return ToolResult(False, [{"type": "text", "text": json.dumps(pages[name])}])
 
     mcp = ReadMcp()
@@ -175,3 +176,109 @@ def test_mcp_resolver_reads_features_and_segments_once():
     assert mcp.calls[0][1]["project_pk"] == 56664
     with pytest.raises(WriterError):
         ids.feature_id("nope")
+
+
+class PagedMcp:
+    """Serves list reads from a table of pages per tool; a str page is sent as raw text."""
+
+    def __init__(self, pages, *, is_error=False):
+        self.pages = pages
+        self.is_error = is_error
+        self.calls = []
+
+    def call_tool(self, name, arguments, *, is_write):
+        assert is_write is False
+        self.calls.append((name, dict(arguments)))
+        page = self.pages[name][arguments.get("page", 1) - 1]
+        text = page if isinstance(page, str) else json.dumps(page)
+        return ToolResult(self.is_error, [{"type": "text", "text": text}])
+
+    def names(self):
+        return [c[0] for c in self.calls]
+
+
+def _page(rows, *, more):
+    return {"count": 0, "next": "https://api.example/next" if more else None,
+            "previous": None, "results": rows}
+
+
+def test_mcp_resolver_follows_pagination():
+    mcp = PagedMcp({"list_project_features": [
+        _page([{"id": 1, "name": "a"}], more=True),
+        _page([{"id": 2, "name": "b"}], more=True),
+        _page([{"id": 3, "name": "c"}], more=False),
+    ]})
+    ids = McpIdResolver(mcp, project_id=56664)
+    assert ids.feature_id("c") == 3
+    assert ids.feature_id("a") == 1
+    pages = [c[1] for c in mcp.calls]
+    assert [p.get("page", 1) for p in pages] == [1, 2, 3]
+    assert all(p["page_size"] == 100 and p["project_pk"] == 56664 for p in pages)
+
+
+def test_mcp_resolver_caps_runaway_pagination():
+    endless = [_page([{"id": i, "name": f"f{i}"}], more=True) for i in range(1, 60)]
+    mcp = PagedMcp({"list_project_features": endless})
+    with pytest.raises(WriterError, match="pages"):
+        McpIdResolver(mcp, project_id=56664).feature_id("f1")
+    assert len(mcp.calls) <= 20
+
+
+@pytest.mark.parametrize("page", [
+    "not json at all",
+    {"results": [{"id": 1}]},
+    {"results": [{"name": "a"}]},
+    {"results": ["a"]},
+    {"results": [{"id": "1", "name": "a"}]},
+    {"results": [{"id": True, "name": "a"}]},
+])
+def test_mcp_resolver_wraps_bad_payloads_as_writer_errors(page):
+    mcp = PagedMcp({"list_project_features": [page]})
+    with pytest.raises(WriterError):
+        McpIdResolver(mcp, project_id=56664).feature_id("a")
+
+
+def test_mcp_resolver_tool_error_is_a_writer_error():
+    mcp = PagedMcp({"list_project_features": ["HTTP error 403"]}, is_error=True)
+    with pytest.raises(WriterError, match="403"):
+        McpIdResolver(mcp, project_id=56664).feature_id("a")
+
+
+class GrowingMcp(PagedMcp):
+    """A project whose features and segments change between reads."""
+
+    def __init__(self):
+        super().__init__({})
+        self.features = [{"id": 1, "name": "a"}]
+        self.segments = [{"id": 10, "name": "s"}]
+
+    def call_tool(self, name, arguments, *, is_write):
+        rows = self.features if name == "list_project_features" else self.segments
+        self.pages[name] = [_page(list(rows), more=False)]
+        return super().call_tool(name, arguments, is_write=is_write)
+
+
+def test_mcp_resolver_reloads_features_once_on_a_miss():
+    mcp = GrowingMcp()
+    ids = McpIdResolver(mcp, project_id=56664)
+    assert ids.feature_id("a") == 1
+    mcp.features.append({"id": 2, "name": "new_flag"})
+    assert ids.feature_id("new_flag") == 2
+    assert mcp.names() == ["list_project_features"] * 2
+    with pytest.raises(WriterError, match="unknown feature"):
+        ids.feature_id("never_exists")
+    assert mcp.names() == ["list_project_features"] * 3
+    assert ids.feature_id("new_flag") == 2  # cached, no new read
+    assert len(mcp.calls) == 3
+
+
+def test_mcp_resolver_reloads_segments_once_on_a_miss():
+    mcp = GrowingMcp()
+    ids = McpIdResolver(mcp, project_id=56664)
+    assert ids.segment_id("s") == 10
+    mcp.segments.append({"id": 11, "name": "new_segment"})
+    assert ids.segment_id("new_segment") == 11
+    with pytest.raises(WriterError, match="unknown segment"):
+        ids.segment_id("never_exists")
+    assert mcp.names().count("list_project_segments") == 3
+    assert mcp.names().count("list_project_features") <= 1
