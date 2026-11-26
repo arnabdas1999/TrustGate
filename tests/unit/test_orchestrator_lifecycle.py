@@ -232,6 +232,46 @@ def test_no_first_suspect_without_a_culprit(setup):
     assert repo.get_investigation("inv_1").timestamps.first_suspect is None
 
 
+class PerFlagSearch(ScriptedSearch):
+    """Culprit {prompt, tools}; the narrowest passing repair reverts the tools only."""
+
+    def __init__(self, validated_flag="agent_tool_policy"):
+        super().__init__(["agent_prompt_version", "agent_tool_policy"], segment=None)
+        self.validated_flag = validated_flag
+
+    def run(self, incident, suspects, mode):
+        from contracts.models import RepairCandidate, TestOutcome, TestPhase, TestResult, WriteOp
+        result = super().run(incident, suspects, mode)
+        old = {s.flag: s.old for s in suspects}
+        cfg = FlagConfig(values={**incident.resolved_flags.values,
+                                 self.validated_flag: old[self.validated_flag]},
+                         source=ConfigSource.OVERRIDE)
+        v = TestResult(phase=TestPhase.VALIDATE, config=cfg, runs=20, failures=0,
+                       outcome=TestOutcome.PASS)
+        op = WriteOp(tool="update_feature_state", project="?", environment="?",
+                     feature="agent_tool_policy", value="restricted")
+        per_flag = RepairCandidate(kind=RepairKind.SURGICAL, ops=[op], validation=v,
+                                   cost_kept=0.9, violations=0)
+        return result.model_copy(update={"candidates": [per_flag]})
+
+
+def test_per_flag_candidate_becomes_a_one_flag_proposal(setup):
+    repo, _, _, make = setup
+    make(PerFlagSearch()).run("inv_1")
+    inv = repo.get_investigation("inv_1")
+    assert inv.status is InvestigationStatus.PROPOSED
+    ops = repo.get_proposal(inv.proposal_id).candidate.ops
+    assert [(o.tool, o.feature, o.value, o.project, o.environment) for o in ops] == [
+        ("update_feature_state", "agent_tool_policy", "restricted", "OpsPilot", "Development")]
+
+
+def test_per_flag_ops_that_differ_from_what_was_validated_are_not_proposed(setup):
+    repo, _, _, make = setup
+    make(PerFlagSearch(validated_flag="agent_prompt_version")).run("inv_1")
+    inv = repo.get_investigation("inv_1")
+    assert inv.status is InvestigationStatus.INCONCLUSIVE and inv.proposal_id is None
+
+
 # --- verify_after_write never leaves the investigation in APPLIED (PR #1 blocker) ---------------
 
 from orchestrator.gate_client import GateBusy  # noqa: E402

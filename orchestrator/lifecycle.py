@@ -40,11 +40,11 @@ from contracts.models import (
 )
 from orchestrator.proposals import (
     ProposalError,
-    build_ops,
     build_proposal,
     check_ops_match_validation,
     expectations,
     inverse_ops,
+    ops_for_candidate,
     passing_candidates,
 )
 from orchestrator.repo import Repo
@@ -161,8 +161,9 @@ class Orchestrator:
 
         for cand in passing_candidates(result.candidates):
             try:
-                ops = build_ops(cand.kind, inv.culprit_set, inv.suspects, segment=inv.segment,
-                                project=cfg.project, environment=cfg.environment)
+                ops = ops_for_candidate(cand, inv.culprit_set, inv.suspects,
+                                        segment=inv.segment, project=cfg.project,
+                                        environment=cfg.environment)
                 check_ops_match_validation(ops, cand, inv.suspects)
             except ProposalError as exc:  # no segment, or not what was validated: next one
                 log.info("investigation %s: skipping %s: %s", inv.id, cand.kind, exc)
