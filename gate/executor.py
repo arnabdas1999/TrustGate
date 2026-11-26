@@ -29,6 +29,9 @@ from gate.mcp_client import McpError
 from gate.scope import GateScope
 from gate.writer import IdResolver, McpCall, WriterError, WriteResult, render, send
 
+# Per-process state: this lock and the approvals store's written-over check only serialise
+# writes inside ONE gate process. Run the gate as a single uvicorn worker (the compose command
+# does); several workers would each have their own lock.
 _ENV_LOCKS: dict[str, threading.Lock] = {}
 _ENV_LOCKS_GUARD = threading.Lock()
 
@@ -78,7 +81,9 @@ class WriteFailed(Exception):
 class Executor:
     def __init__(self, *, approvals: ApprovalStore, scope: GateScope, ids: IdResolver, mcp: Any,
                  fingerprint: Callable[[str], str], audit: AuditLog, settle_reads: int = 8,
-                 settle_interval_s: float = 1.0, sleep: Callable[[float], None] = time.sleep):
+                 settle_interval_s: float = 1.0, sleep: Callable[[float], None] = time.sleep,
+                 monotonic: Callable[[], float] = time.monotonic,
+                 settle_budget_s: float = 10.0):
         self._approvals = approvals
         self._scope = scope
         self._ids = ids
@@ -90,10 +95,16 @@ class Executor:
         self._settle_reads = settle_reads
         self._settle_interval_s = settle_interval_s
         self._sleep = sleep
+        self._monotonic = monotonic
+        # Wall-clock cap on the settle reads (each edge read has its own short timeout), so a
+        # write answers inside the API's and GateClient's 30 s timeouts.
+        self._settle_budget_s = settle_budget_s
 
     def _after_fingerprint(self, environment: str, before: str) -> tuple[str | None, bool]:
-        """The edge document lags a write by a few seconds (seen Nov 26). Read until it moves."""
+        """The edge document lags a write by a few seconds (seen Nov 26). Read until it moves,
+        within settle_reads and the settle time budget."""
         after = None
+        deadline = self._monotonic() + self._settle_budget_s
         for attempt in range(self._settle_reads):
             try:
                 after = self._fingerprint(environment)
@@ -101,8 +112,10 @@ class Executor:
                 return None, False
             if after != before:
                 return after, True
-            if attempt + 1 < self._settle_reads:
-                self._sleep(self._settle_interval_s)
+            if attempt + 1 >= self._settle_reads \
+                    or self._monotonic() + self._settle_interval_s >= deadline:
+                break
+            self._sleep(self._settle_interval_s)
         return after, False
 
     def _refuse(self, approval: Approval, reason: str) -> None:
@@ -167,7 +180,7 @@ class Executor:
             if ensure_session is not None:
                 try:
                     ensure_session()
-                except McpError as exc:
+                except Exception as exc:  # noqa: BLE001 (any failure here must not burn it)
                     self._refuse(approval, f"failed: MCP session unavailable: {exc}")
                     failed = ExecutionResult(approval.proposal_id, approval.approval_id,
                                              "failed", calls,
@@ -180,27 +193,36 @@ class Executor:
             except ApprovalRefused as exc:
                 self._refuse(approval, str(exc))
                 raise
+            except Exception as exc:  # noqa: BLE001 (e.g. a database error): audited, no write
+                raise self._refused(approval, Refusal.BAD_REQUEST,
+                                    f"could not record the approval: {type(exc).__name__}") \
+                    from None
 
             results = send(calls, self._mcp)
             ok = bool(results) and all(r.ok for r in results) and len(results) == len(calls)
-            wrote = any(r.ok for r in results)
-            if wrote:
-                self._approvals.mark_written_over(environment, before)
-            after, settled = self._after_fingerprint(environment, before) if wrote \
-                else (None, False)
+            after, settled = None, False
+            try:
+                # Any attempted call may have landed (a timeout is ambiguous), so the starting
+                # state counts as written over and gets a settle read whenever one was sent.
+                if results:
+                    self._approvals.mark_written_over(environment, before)
+                    after, settled = self._after_fingerprint(environment, before)
+            finally:
+                # Always audit what was sent, even if recording the written-over state failed.
+                failure = next((r.detail for r in results if not r.ok), "")
+                version_uuids = [r.version_uuid for r in results if r.ok and r.version_uuid]
+                self._audit.append(
+                    actor="executor", action="write", tool=calls[0].tool,
+                    args={"calls": [c.to_dict() for c in calls]},
+                    result="applied" if ok else f"failed: {failure}"[:500],
+                    proposal_id=approval.proposal_id, approval_id=approval.approval_id,
+                    approver_claimed=used.approver_claimed, approver_verified=False,
+                    payload_hash=used.payload_hash, fingerprint_before=before,
+                    fingerprint_after=after, after_settled=settled, version_uuids=version_uuids)
 
         result = ExecutionResult(approval.proposal_id, approval.approval_id,
                                  "applied" if ok else "failed", calls, results, before, after,
                                  settled)
-        failure = next((r.detail for r in results if not r.ok), "")
-        self._audit.append(
-            actor="executor", action="write", tool=calls[0].tool,
-            args={"calls": [c.to_dict() for c in calls]},
-            result="applied" if ok else f"failed: {failure}"[:500],
-            proposal_id=approval.proposal_id, approval_id=approval.approval_id,
-            approver_claimed=used.approver_claimed, approver_verified=False,
-            payload_hash=used.payload_hash, fingerprint_before=before, fingerprint_after=after,
-            after_settled=settled, version_uuids=result.version_uuids)
         if not ok:
             raise WriteFailed(result)
         return result

@@ -307,3 +307,80 @@ def test_default_settle_budget_fits_inside_the_apis_30s_timeout(parts):
     ex = Executor(approvals=parts[0], scope=SCOPE, ids=IDS, mcp=FakeMcp(),
                   fingerprint=Fingerprints(), audit=parts[1])
     assert ex._settle_reads * ex._settle_interval_s <= 10
+
+
+# --- second review --------------------------------------------------------------------------
+
+
+def test_ambiguous_write_still_blocks_the_old_fingerprint(parts):
+    # The write timed out: it may have landed. The state it started from must be refused.
+    mcp = FakeMcp(exc=McpError("network error during write (not retried)"))
+    ex = _executor(parts, mcp, Fingerprints(default=FP_OK), settle_reads=2)
+    with pytest.raises(WriteFailed):
+        ex.execute(_approve(parts, _ops(), approval_id="appr_a", proposal_id="prop_a"), _ops())
+    assert parts[0].was_written_over("Development", FP_OK)
+    b_ops = _ops(feature="agent_tool_policy", value="restricted")
+    with pytest.raises(StaleState):
+        ex.execute(_approve(parts, b_ops, approval_id="appr_b", proposal_id="prop_b"), b_ops)
+    assert len(mcp.sent) == 1
+
+
+class Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def now(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
+def test_settle_stops_at_its_time_budget_even_with_slow_reads(parts):
+    clock = Clock()
+
+    def slow_fp(env):
+        clock.t += 3.0  # each edge read takes 3 s
+        return FP_OK
+
+    ex = Executor(approvals=parts[0], scope=SCOPE, ids=IDS, mcp=FakeMcp(), fingerprint=slow_fp,
+                  audit=parts[1], settle_reads=50, settle_interval_s=1.0, sleep=clock.sleep,
+                  monotonic=clock.now, settle_budget_s=10.0)
+    ops = _ops()
+    result = ex.execute(_approve(parts, ops), ops)
+    assert result.status == "applied" and not result.after_settled
+    assert clock.t <= 3.0 + 10.0 + 3.0  # before-read + budget + at most one read in flight
+
+
+def test_session_check_crash_is_an_audited_failure_not_a_500(parts):
+    mcp = FakeMcp(session_error=ValueError("ping reply was not JSON"))
+    ops = _ops()
+    with pytest.raises(WriteFailed):
+        _executor(parts, mcp, Fingerprints(FP_OK)).execute(_approve(parts, ops), ops)
+    assert mcp.sent == [] and not parts[0].is_used("appr_1")
+    assert "session" in parts[1].entries()[-1]["result"]
+
+
+def test_consume_crash_is_an_audited_refusal(parts, monkeypatch):
+    def broken(*a, **k):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(parts[0], "consume", broken)
+    mcp = FakeMcp()
+    ops = _ops()
+    with pytest.raises(ApprovalRefused):
+        _executor(parts, mcp, Fingerprints(FP_OK)).execute(_approve(parts, ops), ops)
+    assert mcp.sent == [] and parts[1].entries()[-1]["action"] == "refused"
+
+
+def test_applied_write_is_audited_even_if_marking_written_over_fails(parts, monkeypatch):
+    def broken(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(parts[0], "mark_written_over", broken)
+    mcp = FakeMcp()
+    ops = _ops()
+    with pytest.raises(RuntimeError):
+        _executor(parts, mcp, Fingerprints(FP_OK, FP_NEW)).execute(_approve(parts, ops), ops)
+    entry = parts[1].entries()[-1]
+    assert entry["action"] == "write" and entry["result"] == "applied"
