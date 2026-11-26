@@ -19,6 +19,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from agent.explain import explain
+from agent.llm import LLM
+from agent.ordering import order_suspects
 from agent.triage import TriageError, triage
 from contracts.models import (
     Domain,
@@ -77,10 +80,14 @@ class Orchestrator:
                  configs: Mapping[Domain, DomainConfig],
                  flag_source: Callable[[str], FlagSource],
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-                 sleep: Callable[[float], None] = time.sleep, verify_timeout_s: float = 60.0):
+                 sleep: Callable[[float], None] = time.sleep, verify_timeout_s: float = 60.0,
+                 llm: LLM | None = None, llm_model: str = ""):
         self.repo, self.gate, self.search = repo, gate, search
         self.configs, self.flag_source = configs, flag_source
         self.clock, self.sleep, self.verify_timeout_s = clock, sleep, verify_timeout_s
+        # Optional: guided suspect ordering and the approver's explanation. Without it (or on
+        # quota) the diff order and the code-written template are used.
+        self.llm, self.llm_model = llm, llm_model
 
     def _save(self, inv: Investigation, status: InvestigationStatus | None = None) -> None:
         if status is not None:
@@ -109,8 +116,12 @@ class Orchestrator:
 
         baseline = load_snapshot(incident.baseline_snapshot, self.gate)
         release = load_snapshot(incident.release_snapshot, self.gate)
-        inv.suspects = release_diff(baseline, release)  # plain order; guided ordering: later
-        if inv.suspects:
+        ordering = order_suspects(release_diff(baseline, release), incident.trace, inv.mode,
+                                  self.llm, model=self.llm_model)
+        inv.suspects = ordering.suspects
+        if ordering.note:
+            log.info("investigation %s: %s", inv.id, ordering.note)
+        if inv.suspects:  # a ranking exists (LLM, or diff order in plain mode / fallback)
             inv.timestamps.first_suspect = self.clock()
         view = self.gate.read("get_environment_document", {"environment": cfg.environment})
         try:
@@ -138,9 +149,11 @@ class Orchestrator:
             except ProposalError as exc:  # e.g. no segment matched: try the next candidate
                 log.info("investigation %s: skipping %s: %s", inv.id, cand.kind, exc)
                 continue
+            text = explain(culprit_set=inv.culprit_set, segment=inv.segment, chosen=cand,
+                           options=result.candidates, llm=self.llm, model=self.llm_model,
+                           fallback=_explain(inv, cand)).text
             proposal, calls = build_proposal(inv.id, cand, ops, self.gate,
-                                             environment=cfg.environment,
-                                             explanation=_explain(inv, cand),
+                                             environment=cfg.environment, explanation=text,
                                              now=self.clock(), sleep=self.sleep)
             self.repo.put_proposal(proposal)
             self.repo.put_calls(proposal.id, calls)
