@@ -40,13 +40,16 @@ class ProposalError(Exception):
     pass
 
 
+def passing_candidates(candidates: Sequence[RepairCandidate]) -> list[RepairCandidate]:
+    """Candidates that passed validation with no violations, narrowest first."""
+    return [c for kind in NARROWEST_FIRST for c in candidates
+            if c.kind is kind and c.validation is not None
+            and c.validation.outcome is TestOutcome.PASS and not c.violations]
+
+
 def choose_candidate(candidates: Sequence[RepairCandidate]) -> RepairCandidate | None:
-    for kind in NARROWEST_FIRST:
-        for cand in candidates:
-            if cand.kind is kind and cand.validation is not None \
-                    and cand.validation.outcome is TestOutcome.PASS and not cand.violations:
-                return cand
-    return None
+    passing = passing_candidates(candidates)
+    return passing[0] if passing else None
 
 
 def _old_value(change: FlagChange) -> FlagValue:
