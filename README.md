@@ -175,7 +175,7 @@ key.
 | `GATE_SERVER_KEY_<ENV>` | `.env.gate` | Gate | One server-side key per environment, e.g. `GATE_SERVER_KEY_DEMO_PRODUCTION` |
 | `FLAGSMITH_MCP_URL` | `.env.gate` | Gate | Optional. Leave unset to use the default, `https://mcp.flagsmith.com/mcp` |
 | `GATE_DB_PATH`, `GATE_AUDIT_PATH` | `.env.gate` | Gate | Optional paths for the approvals database and the audit trail |
-| `GATE_SHARED_TOKEN` | `.env.gate` | Gate | Optional. When set, every gate call needs this bearer token (off by default) |
+| `GATE_SHARED_TOKEN` | both | Gate, API | Optional. When set, every gate call needs this bearer token (off by default). Put the same value in `.env` too, or the API's approvals and reads are refused |
 
 Without the required gate settings, the gate still starts (so `docker compose up` works) and
 answers 503.

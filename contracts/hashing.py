@@ -43,4 +43,6 @@ def verify_signature(
     secret: str, signature: str, approval_id: str, proposal_id: str, payload: str, expires_at: str
 ) -> bool:
     expected = sign_approval(secret, approval_id, proposal_id, payload, expires_at)
-    return hmac.compare_digest(expected, signature)
+    # Compare bytes: compare_digest raises TypeError on non-ASCII str input, which would turn
+    # a forged signature into an unaudited 500 instead of a refusal.
+    return hmac.compare_digest(expected.encode("utf-8"), str(signature).encode("utf-8"))

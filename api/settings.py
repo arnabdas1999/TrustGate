@@ -33,5 +33,13 @@ def web_origins() -> list[str]:
     return [o.strip() for o in env("WEB_ORIGIN", "http://localhost:3000").split(",") if o.strip()]
 
 
+def gate_token() -> str:
+    """Optional bearer token for the gate (GATE_SHARED_TOKEN). Must match the gate's value."""
+    return env("GATE_SHARED_TOKEN")
+
+
 SESSION_HOURS = 8
-APPROVAL_MINUTES = 15
+# The gate refuses approvals that live longer than 15 minutes by ITS clock. One minute of
+# margin keeps a slightly fast API clock from making every approval "expiry too far".
+APPROVAL_MINUTES = 14
+GATE_WRITE_TIMEOUT_S = 60
