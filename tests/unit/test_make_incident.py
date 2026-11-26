@@ -65,7 +65,16 @@ def test_written_release_hides_the_culprit_and_the_hash_matches(tmp_path):
     key = json.loads(key_path.read_text())
     assert hashlib.sha256(canonical_json(key).encode()).hexdigest() == digest
     assert len(key["salt"]) == 32
-    assert f"opspilot-dev-11 {digest}" in (tmp_path / "keys" / "hashes.txt").read_text()
+    assert f"opspilot-dev-11 {digest}" in (tmp_path / "keys" / "hashes-dev.txt").read_text()
+    assert not (tmp_path / "keys" / "hashes.txt").exists()  # dev runs never touch the proof file
+
+
+def test_eval_hashes_go_to_the_committed_file_with_lf_endings(tmp_path):
+    _, digest = write_incident("vaultguard", 2, "eval", bench_dir=tmp_path,
+                               pools=_verified_pools())
+    raw = (tmp_path / "keys" / "hashes.txt").read_bytes()
+    assert raw == f"vaultguard-eval-2 {digest}\n".encode()
+    assert b"\r\n" not in (tmp_path / "releases" / "vaultguard-eval-2.json").read_bytes()
 
 
 def test_existing_key_is_never_overwritten(tmp_path):

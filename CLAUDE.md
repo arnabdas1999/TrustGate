@@ -38,10 +38,12 @@ https://claude.ai/artifact/Y2dedK54p88CAEUoPyjdHi (tabs: plan, Development plan)
 - Flagsmith tests: uv run pytest -m flagsmith
 - LLM tests (costs credits): uv run pytest -m llm
 - Lint: uv run ruff check .
-- API locally: uv run uvicorn api.main:app --reload --port 8000
-- Web locally: cd web && npm run dev
-- Everything: docker compose up --build
-- New benchmark incident: uv run python -m bench.make_incident --seed 1
+- API locally: uv run uvicorn api.main:app --env-file .env --reload --port 8000
+- Gate locally (real keys only): uv run uvicorn gate.service:app --env-file .env.gate --port 8100
+- Web locally: cd web, then npm run dev
+- Smoke test: uv run python -m scripts.smoke (APPROVER_PASSWORD in the shell)
+- Everything: docker compose up --build   (WEB_PORT=3001 WEB_ORIGIN=http://localhost:3001 if 3000 is taken)
+- New benchmark incident: uv run python -m bench.make_incident --domain opspilot --seed 1 --set dev --allow-unverified
 
 ## Git
 - Each person works on their own branch: arnab-dev, naman-dev, khyati-dev.

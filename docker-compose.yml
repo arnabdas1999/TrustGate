@@ -12,7 +12,8 @@ services:
         required: false
     environment:
       GATE_URL: http://gate:8100
-      WEB_ORIGIN: http://localhost:3000
+      # Match WEB_PORT if you change it (e.g. WEB_PORT=3001 WEB_ORIGIN=http://localhost:3001)
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
     ports:
       - "8000:8000"
     volumes:
@@ -38,6 +39,7 @@ services:
       args:
         NEXT_PUBLIC_API_URL: http://localhost:8000
     ports:
-      - "3000:3000"
+      # Host port is configurable when 3000 is taken: WEB_PORT=3001 docker compose up
+      - "${WEB_PORT:-3000}:3000"
     depends_on:
       - api

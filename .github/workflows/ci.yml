@@ -32,6 +32,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the compose images (web, api, gate)
+        run: docker compose build
+
   web:
     runs-on: ubuntu-latest
     defaults:
