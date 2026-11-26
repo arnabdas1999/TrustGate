@@ -60,6 +60,10 @@ class FakeGate:
         self.rendered.append(proposal_id)
         return [{"tool": "create_environment_feature_version", "arguments": {"n": len(ops)}}]
 
+    def register(self, ops, proposal_id):
+        return {"proposal_id": proposal_id, "fingerprint": self.fp, "payload_hash": "h",
+                "calls": self.render(ops, proposal_id)}
+
 
 class FakeFlags:
     """Serves what Flagsmith would after the write, or keeps serving the release."""

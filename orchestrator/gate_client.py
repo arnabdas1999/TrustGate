@@ -7,6 +7,7 @@ Writes stay in api.main._send_to_gate, which signs the approval first.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from typing import Any
 
@@ -22,12 +23,14 @@ class GateError(Exception):
 
 class GateClient:
     def __init__(self, base_url: str, *, client: httpx.Client | None = None,
-                 timeout: float = 30.0):
+                 timeout: float = 30.0, token: str | None = None):
         self._http = client or httpx.Client(base_url=base_url.rstrip("/"), timeout=timeout)
+        token = os.environ.get("GATE_SHARED_TOKEN", "") if token is None else token
+        self._headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     def _call(self, method: str, path: str, **kwargs: Any) -> Any:
         try:
-            r = self._http.request(method, path, **kwargs)
+            r = self._http.request(method, path, headers=self._headers, **kwargs)
         except httpx.HTTPError as exc:
             raise GateError(f"gate unreachable: {type(exc).__name__}") from None
         if r.status_code >= 400:
@@ -42,19 +45,22 @@ class GateClient:
         body = {"ops": [op.model_dump(mode="json") for op in ops], "proposal_id": proposal_id}
         return self._call("POST", "/gate/render", json=body)["calls"]
 
+    def register(self, ops: Sequence[WriteOp], proposal_id: str) -> dict[str, Any]:
+        """Register the proposal with the gate: it records the payload hash and its OWN settled
+        fingerprint, which /gate/write later checks. Returns fingerprint, payload_hash, calls."""
+        body = {"ops": [op.model_dump(mode="json") for op in ops], "proposal_id": proposal_id}
+        return self._call("POST", "/gate/register", json=body)
+
     def read(self, tool: str, args: dict[str, Any]) -> Any:
         return self._call("POST", "/gate/read", json={"tool": tool, "args": args})["result"]
 
-    def audit_entries(self, environment: str | None = None,
-                      features: Sequence[str] = ()) -> list[AuditEntry]:
+    def audit_entries(self, proposal_id: str | None = None) -> list[AuditEntry]:
         """The gate's audit trail as API AuditEntry rows (lines that don't fit are skipped).
 
-        With an environment and features, the gate also merges Flagsmith's version history.
+        Uses GET /gate/audit, which the gate doesn't log, so UI polling adds no audit lines.
         """
-        args: dict[str, Any] = {}
-        if environment and features:
-            args = {"environment": environment, "features": list(features)}
-        result = self.read("get_audit_log", args)
+        params = {"proposal_id": proposal_id} if proposal_id else None
+        result = self._call("GET", "/gate/audit", params=params)
         entries = []
         for line in result.get("gate", []):
             try:

@@ -41,16 +41,38 @@ def test_render_posts_ops_and_returns_calls():
     assert calls[0]["tool"] == "create_environment_feature_version"
 
 
-def test_audit_entries_are_api_audit_entries():
+def test_audit_entries_use_the_unlogged_audit_endpoint():
     def handler(request):
-        body = json.loads(request.content)
-        assert body == {"tool": "get_audit_log", "args": {"environment": "Development",
-                                                          "features": ["agent_prompt_version"]}}
-        return httpx.Response(200, json={"tool": "get_audit_log", "is_error": False, "result": {
-            "gate": [GATE_LINE, {"broken": True}], "outside_trustgate": []}})
+        assert request.method == "GET" and request.url.path == "/gate/audit"
+        return httpx.Response(200, json={"gate": [GATE_LINE, {"broken": True}]})
 
-    entries = _client(handler).audit_entries("Development", ["agent_prompt_version"])
-    assert entries == [AuditEntry.model_validate(GATE_LINE)]
+    assert _client(handler).audit_entries() == [AuditEntry.model_validate(GATE_LINE)]
+
+
+def test_register_returns_the_gates_fingerprint_and_calls():
+    def handler(request):
+        assert request.url.path == "/gate/register"
+        body = json.loads(request.content)
+        assert body["proposal_id"] == "prop_1" and len(body["ops"]) == 1
+        return httpx.Response(200, json={"proposal_id": "prop_1", "fingerprint": "f" * 64,
+                                         "payload_hash": "h" * 64, "calls": [{"tool": "x"}]})
+
+    reg = _client(handler).register(OPS, "prop_1")
+    assert reg["fingerprint"] == "f" * 64 and reg["calls"] == [{"tool": "x"}]
+
+
+def test_shared_token_is_sent_when_configured():
+    seen = []
+
+    def handler(request):
+        seen.append(request.headers.get("authorization"))
+        return httpx.Response(200, json={"gate": []})
+
+    client = GateClient("http://gate:8100", token="tok",
+                        client=httpx.Client(transport=httpx.MockTransport(handler),
+                                            base_url="http://gate:8100"))
+    client.audit_entries()
+    assert seen == ["Bearer tok"]
 
 
 def test_gate_errors_raise_with_status():
@@ -65,11 +87,3 @@ def test_unreachable_gate_raises():
 
     with pytest.raises(GateError, match="unreachable"):
         _client(handler).fingerprint("Development")
-
-
-def test_audit_entries_without_environment_asks_for_the_gate_trail_only():
-    def handler(request):
-        assert json.loads(request.content) == {"tool": "get_audit_log", "args": {}}
-        return httpx.Response(200, json={"result": {"gate": [GATE_LINE]}})
-
-    assert len(_client(handler).audit_entries()) == 1

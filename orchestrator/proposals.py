@@ -4,9 +4,9 @@ The search validates repair candidates (narrowest first). This module:
 - picks the narrowest candidate that passed validation
 - builds its WriteOps from the candidate's kind, the culprit set and the segment, using the
   typed baseline values from the release diff
-- binds the proposal to payload_hash(ops), the environment's fingerprint (read until it holds
-  still, since the edge document lags writes) and a 15-minute expiry
-- asks the gate to render the exact MCP call(s), which the proposal card shows
+- registers the proposal with the gate, which records payload_hash(ops) and its own settled
+  fingerprint and renders the exact MCP call(s) the proposal card shows
+- binds the proposal to that hash, that fingerprint and a 15-minute expiry
 - builds inverse ops for a rollback proposal and the verifier's expectations
 """
 
@@ -112,8 +112,10 @@ def build_proposal(investigation_id: str, candidate: RepairCandidate, ops: list[
         raise ProposalError("no ops to propose")
     now = now or datetime.now(UTC)
     proposal_id = proposal_id or f"prop_{secrets.token_hex(6)}"
-    fingerprint = settled_fingerprint(gate, environment, sleep=sleep)
-    calls = gate.render(ops, proposal_id)
+    # The gate records the payload hash and takes its OWN settled fingerprint; /gate/write
+    # checks against that record, so the proposal carries the gate's value.
+    registration = gate.register(ops, proposal_id)
+    fingerprint, calls = registration["fingerprint"], registration["calls"]
     proposal = Proposal(id=proposal_id, investigation_id=investigation_id,
                         candidate=candidate.model_copy(update={"ops": ops}),
                         payload_hash=payload_hash(ops), fingerprint=fingerprint,

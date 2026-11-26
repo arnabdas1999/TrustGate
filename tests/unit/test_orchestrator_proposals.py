@@ -111,6 +111,11 @@ class FakeGate:
         self.rendered.append((ops, proposal_id))
         return [{"tool": "create_environment_feature_version", "arguments": {"pid": proposal_id}}]
 
+    def register(self, ops, proposal_id):
+        self.rendered.append((ops, proposal_id))
+        return {"proposal_id": proposal_id, "fingerprint": self.fingerprints[-1],
+                "payload_hash": "ignored", "calls": self.render(ops, proposal_id)[:1]}
+
 
 def test_settled_fingerprint_waits_for_two_equal_reads():
     gate = FakeGate(["a", "b", "b"])
@@ -127,7 +132,7 @@ def test_build_proposal_binds_hash_fingerprint_expiry_and_exact_call():
     cand = _cand(RepairKind.SEGMENT_OVERRIDE)
     ops = build_ops(cand.kind, [PROMPT], SUSPECTS, segment="tier0_production",
                     project="OpsPilot", environment="Development")
-    gate = FakeGate(["f" * 64, "f" * 64])
+    gate = FakeGate(["f" * 64])  # the gate registers with its own settled fingerprint
     proposal, calls = build_proposal("inv_1", cand, ops, gate, environment="Development",
                                      explanation="why", now=NOW, proposal_id="prop_x",
                                      sleep=lambda s: None)
