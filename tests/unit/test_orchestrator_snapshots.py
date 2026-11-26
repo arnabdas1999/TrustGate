@@ -44,19 +44,45 @@ def test_gate_snapshot_reads_through_the_gate():
     assert values["agent_prompt_version"] == "v2_fast"
 
 
-@pytest.mark.parametrize("ref", ["http://x", "file:", "gate:", "Development"])
+@pytest.mark.parametrize("ref", ["http://x", "file:", "gate:", "Development", ""])
 def test_bad_refs_are_refused(ref):
     with pytest.raises(SnapshotError):
         load_snapshot(ref, FakeGate())
+
+
+def test_bare_path_is_a_file_snapshot(tmp_path):
+    path = tmp_path / "baseline_env.json"
+    path.write_text(json.dumps({"values": BASELINE}))
+    gate = FakeGate()
+    assert load_snapshot(str(path), gate) == BASELINE and gate.reads == []
+
+
+def test_flat_flag_values_body_is_accepted(tmp_path):
+    path = tmp_path / "baseline.json"
+    path.write_text(json.dumps(BASELINE))
+    assert load_snapshot(str(path), FakeGate()) == BASELINE
+
+
+@pytest.mark.parametrize("body", [[1, 2], {"values": [1]}, {"agent_model": {"nested": 1}}])
+def test_snapshot_bodies_that_are_not_flag_values_are_refused(tmp_path, body):
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(body))
+    with pytest.raises(SnapshotError):
+        load_snapshot(f"file:{path}", FakeGate())
 
 
 def test_release_diff_lists_changed_flags_in_name_order():
     release = load_snapshot("gate:Development", FakeGate())
     diff = release_diff(BASELINE, release)
     assert [(c.flag, c.old, c.new) for c in diff] == [
-        ("agent_max_steps", 6, "12"),
+        ("agent_max_steps", 6, 12),  # typed like the baseline, so a rollback writes 12
         ("agent_model", "model_flagship", "model_cheap"),
         ("agent_prompt_version", "v1_strict", "v2_fast")]
+
+
+def test_non_numeric_strings_stay_strings():
+    diff = release_diff({"a": 6, "b": 0.5, "c": "x"}, {"a": "seven", "b": "0.7", "c": "y"})
+    assert [(c.flag, c.new) for c in diff] == [("a", "seven"), ("b", 0.7), ("c", "y")]
 
 
 def test_string_and_int_of_the_same_number_are_not_a_change():
