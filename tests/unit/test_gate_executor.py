@@ -395,3 +395,81 @@ def test_reused_approval_is_refused_as_reused_before_the_stale_check(parts):
     with pytest.raises(ApprovalRefused) as err:
         ex.execute(approval, ops)
     assert err.value.reason is Refusal.REUSED and len(mcp.sent) == 1
+
+
+# --- PR #1 gate items 1 and 3, and the registration TTL ----------------------------------------
+
+
+def test_concurrent_double_approve_of_one_proposal_is_reused_not_stale(parts):
+    """The second request passes the first reuse check while the first is still writing."""
+    approvals, _ = parts
+    mcp = FakeMcp()
+    ops = _ops()
+    approval = _approve(parts, ops)
+    second_past_precheck = threading.Event()
+    real_registration = approvals.registration
+    calls = []
+
+    def registration(pid):  # runs right after the reuse pre-check, outside the lock
+        calls.append(pid)
+        if len(calls) == 2:
+            second_past_precheck.set()
+        return real_registration(pid)
+    approvals.registration = registration
+
+    def fps(environment):  # the first request holds the lock until the second is waiting
+        second_past_precheck.wait(timeout=5)
+        return FP_OK
+    ex = _executor(parts, mcp, fps, settle_reads=1)
+    outcomes = []
+
+    def run():
+        try:
+            ex.execute(approval, ops)
+            outcomes.append("applied")
+        except ApprovalRefused as exc:
+            outcomes.append(str(exc.reason))
+        except StaleState:
+            outcomes.append("stale")
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert sorted(outcomes) == sorted(["applied", str(Refusal.REUSED)])
+    assert len(mcp.sent) == 1
+
+
+def test_non_ascii_payload_hash_is_a_mismatch_not_a_crash(parts):
+    from contracts.hashing import sign_approval
+    ops = _ops()
+    parts[0].register_proposal("prop_1", payload_hash(ops), FP_OK, "Development")
+    exp = NOW + timedelta(minutes=10)
+    bad = "é" * 64
+    approval = Approval(proposal_id="prop_1", approval_id="appr_1", approver="naman",
+                        payload_hash=bad, created_at=NOW, expires_at=exp,
+                        signature=sign_approval(SECRET, "appr_1", "prop_1", bad, exp.isoformat()))
+    with pytest.raises(ApprovalRefused) as err:
+        _executor(parts, FakeMcp(), Fingerprints(FP_OK)).execute(approval, ops)
+    assert err.value.reason is Refusal.PAYLOAD_MISMATCH
+
+
+def test_registration_older_than_15_minutes_is_refused_as_expired(tmp_path):
+    from contracts.hashing import sign_approval
+    clock = [NOW]
+    approvals = ApprovalStore(tmp_path / "a.db", secret=SECRET, scope=SCOPE,
+                              clock=lambda: clock[0])
+    audit = AuditLog(tmp_path / "audit.jsonl", clock=lambda: clock[0])
+    ops = _ops()
+    approvals.register_proposal("prop_1", payload_hash(ops), FP_OK, "Development")
+    clock[0] = NOW + timedelta(minutes=16)  # a fresh approval for an old registration
+    exp = clock[0] + timedelta(minutes=10)
+    ph = payload_hash(ops)
+    approval = Approval(proposal_id="prop_1", approval_id="appr_1", approver="naman",
+                        payload_hash=ph, created_at=clock[0], expires_at=exp,
+                        signature=sign_approval(SECRET, "appr_1", "prop_1", ph, exp.isoformat()))
+    mcp = FakeMcp()
+    with pytest.raises(ApprovalRefused) as err:
+        _executor((approvals, audit), mcp, Fingerprints(FP_OK)).execute(approval, ops)
+    assert err.value.reason is Refusal.EXPIRED and mcp.sent == []

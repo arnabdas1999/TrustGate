@@ -149,7 +149,10 @@ class Executor:
         if reg is None:
             raise self._refused(approval, Refusal.BAD_REQUEST,
                                 "proposal was not registered with the gate")
-        if not hmac.compare_digest(reg.payload_hash, approval.payload_hash):
+        if self._approvals.registration_expired(reg):
+            raise self._refused(approval, Refusal.EXPIRED,
+                                "the proposal's registration is older than 15 minutes")
+        if not hmac.compare_digest(reg.payload_hash.encode(), approval.payload_hash.encode()):
             raise self._refused(approval, Refusal.PAYLOAD_MISMATCH,
                                 "approved payload differs from the registered proposal")
         environment = ops[0].environment
@@ -169,6 +172,12 @@ class Executor:
                 from None
 
         with _environment_lock(environment):
+            # Again under the lock: a concurrent double approve that passed the check above
+            # while the first was writing must be told REUSED, not stale.
+            if self._approvals.is_used(approval.approval_id) \
+                    or self._approvals.proposal_used(approval.proposal_id):
+                raise self._refused(approval, Refusal.REUSED,
+                                    f"approval {approval.approval_id} or its proposal was used")
             if self._approvals.was_written_over(environment, reg.fingerprint):
                 self._refuse(approval, "stale: the gate already wrote over this state")
                 raise StaleState("Flagsmith was written since the proposal")
