@@ -152,6 +152,23 @@ def _overrides(view):
     return view["segments"][SEGMENT]["overrides"]
 
 
+def test_verifier_reads_back_baseline_and_rejects_a_wrong_expectation(live):
+    from contracts.models import Identity
+    from verifier.readback import EdgeFlagSource, Expectation, VerifyStatus, verify
+
+    source = EdgeFlagSource(live["server_key"])
+    tier0 = Identity(identifier="it-verifier-tier0", traits={"env": "prod", "tier": 0})
+    staging = Identity(identifier="it-verifier-staging", traits={"env": "staging", "tier": 2})
+    ok = verify([Expectation(tier0, {FEATURE: BASELINE, "agent_max_steps": 6}),
+                 Expectation(staging, {FEATURE: BASELINE})], source, timeout_s=20)
+    assert ok.status is VerifyStatus.VERIFIED, ok.detail
+    wrong = verify([Expectation(tier0, {FEATURE: OVERRIDE})], source, timeout_s=4, interval_s=2)
+    assert wrong.status is VerifyStatus.FAILED
+    missing = verify([Expectation(tier0, {"no_such_flag": "x"})], source, timeout_s=2,
+                     interval_s=2)
+    assert missing.status is VerifyStatus.TIMEOUT
+
+
 def test_segment_override_write_readback_and_cleanup(live, tmp_path):
     secret = secrets.token_hex(16)
     executor = _executor(live, tmp_path, secret)
