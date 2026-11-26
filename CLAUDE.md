@@ -51,5 +51,7 @@ https://claude.ai/artifact/Y2dedK54p88CAEUoPyjdHi (tabs: plan, Development plan)
   main at the end; Arnab merges. Never commit straight to main.
 - main is GitHub's default branch and stays empty until the final merge.
   Merge into main through PRs (arnab-dev -> main, naman-dev -> main, ...).
-- Commit messages: "area: what changed".
+- Commit messages: "area: what changed". No "Co-Authored-By: Claude" (or any AI)
+  trailer and no "Generated with Claude Code" line in commits or PR descriptions:
+  commits are authored by the teammate who pushes them.
 - CI runs on pushes to *-dev branches and on PRs. Checkpoints are tagged cpN-name.

@@ -1,4 +1,5 @@
 import json
+import shlex
 
 import httpx
 import pytest
@@ -352,8 +353,10 @@ def test_main_half_applied_release_prints_the_exact_revert_command(run_main, tmp
     baseline = next(tmp_path.glob("Development/*/baseline_env.json"))
     err = capsys.readouterr().err
     assert "Flagsmith call failed: ConnectError" in err
+    # shlex.quote wraps Windows paths (backslashes) in quotes, so compare against the same
+    # quoting the script uses rather than the bare path.
     assert ("uv run python -m scripts.release --environment Development --revert "
-            f"{baseline}") in err
+            f"{shlex.quote(str(baseline))}") in err
 
     fake.versions.clear()  # the printed command puts every flag back
     healthy = FakeFlagsmith(values=fake.values, enabled=fake.enabled)
@@ -368,7 +371,7 @@ def test_main_half_applied_revert_says_to_run_the_same_revert(run_main, tmp_path
     broken = FailsMidRelease(values=base.values)
     assert run_main(broken, "--environment", "Development", "--revert", str(baseline)) == 2
     err = capsys.readouterr().err
-    assert "To finish the revert" in err and f"--revert {baseline}" in err
+    assert "To finish the revert" in err and f"--revert {shlex.quote(str(baseline))}" in err
 
 
 def test_main_failure_before_any_write_prints_no_revert_hint(run_main, capsys):

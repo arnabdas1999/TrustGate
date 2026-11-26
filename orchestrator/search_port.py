@@ -141,9 +141,16 @@ class ScriptedSearch:
 
 
 def search_from_env(env: Mapping[str, str] | None = None) -> SearchEngine:
-    """TRUSTGATE_SEARCH=scripted:flag_a,flag_b[@segment] picks ScriptedSearch (segment default
-    tier0_production); unset means unavailable."""
-    value = (os.environ if env is None else env).get("TRUSTGATE_SEARCH", "")
+    """TRUSTGATE_SEARCH picks the engine:
+    - sandbox: the real search (search.SandboxSearch: sandbox replays, ddmin, repair validation)
+    - scripted:flag_a,flag_b[@segment]: ScriptedSearch for demos and tests (segment default
+      tier0_production)
+    - unset: unavailable (investigations end INCONCLUSIVE)."""
+    value = (os.environ if env is None else env).get("TRUSTGATE_SEARCH", "").strip()
+    if value == "sandbox":
+        from search import SandboxSearch  # imported here: it pulls in the sandbox and its LLM
+
+        return SandboxSearch()
     if value.startswith("scripted:"):
         flags, _, segment = value[len("scripted:"):].partition("@")
         return ScriptedSearch([f.strip() for f in flags.split(",") if f.strip()],

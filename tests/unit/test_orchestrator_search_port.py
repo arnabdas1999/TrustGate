@@ -102,6 +102,13 @@ def test_scripted_without_a_segment_skips_the_segment_candidate():
     assert [c.kind for c in result.candidates] == [RepairKind.SURGICAL, RepairKind.GLOBAL]
 
 
+def test_sandbox_value_selects_the_real_search():
+    from search import SandboxSearch
+
+    assert isinstance(search_from_env({"TRUSTGATE_SEARCH": "sandbox"}), SandboxSearch)
+    assert isinstance(search_from_env({"TRUSTGATE_SEARCH": " sandbox "}), SandboxSearch)
+
+
 def test_search_from_env_reads_an_optional_segment():
     engine = search_from_env({"TRUSTGATE_SEARCH": "scripted:agent_prompt_version@high_value_wires"})
     assert engine.culprits == ["agent_prompt_version"] and engine.segment == "high_value_wires"
