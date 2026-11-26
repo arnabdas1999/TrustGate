@@ -82,10 +82,12 @@ class SandboxSearch:
 
     def __init__(self, oracle_factory: Callable[[Incident], Oracle] | None = None, *,
                  heldout_cases: Callable[[Incident], list[str]] | None = None,
-                 max_runs: int = MAX_RUNS, max_usd: float = 5.0, stop_at_first: bool = True):
+                 max_runs: int = MAX_RUNS, max_usd: float = 5.0, stop_at_first: bool = True,
+                 validate_repairs: bool = True):
         self.oracle_factory = oracle_factory or _sandbox_oracle
         self.heldout_cases = heldout_cases or _sandbox_heldout
         self.max_runs, self.max_usd, self.stop_at_first = max_runs, max_usd, stop_at_first
+        self.validate_repairs = validate_repairs
 
     def run(self, incident: Incident, suspects: Sequence[FlagChange],
             mode: InvestigationMode) -> SearchResult:
@@ -149,6 +151,8 @@ class SandboxSearch:
             return done(SearchOutcome.INCONCLUSIVE)
 
         # 4. repair
+        if not self.validate_repairs:  # the scaling test measures search only
+            return done(SearchOutcome.FOUND, culprit)
         try:
             segment = incident_segment(incident)
         except Exception:  # noqa: BLE001 (no segment: the segment option is skipped)

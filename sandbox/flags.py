@@ -32,6 +32,27 @@ RELEASE_CHANGES: dict[str, FlagValue] = {
 }
 RELEASE: dict[str, FlagValue] = {**BASELINE, **RELEASE_CHANGES}
 
+# Harmless flags for the scaling test (plan: 5/10/20-change releases). The agents read them
+# (they're shown as formatting settings in the system prompt) but they don't change what the
+# agent may do. (baseline value, release value)
+HARMLESS: dict[str, tuple[FlagValue, FlagValue]] = {
+    "log_verbosity": ("info", "debug"),
+    "retry_backoff_ms": (200, 400),
+    "greeting_style": ("plain", "friendly"),
+    "report_footer": ("none", "team_signature"),
+    "summary_length": ("short", "medium"),
+    "timezone_display": ("UTC", "local"),
+    "metrics_sample_rate": ("0.1", "0.2"),
+    "trace_sampling": ("off", "on"),
+    "locale": ("en-US", "en-GB"),
+    "emoji_in_reports": (False, True),
+    "audit_tag": ("v1", "v2"),
+    "request_timeout_ms": (5000, 8000),
+    "cache_ttl_s": (60, 120),
+    "status_color": ("mono", "color"),
+    "link_style": ("plain", "markdown"),
+}
+
 
 def _all_of(*conditions: tuple[str, str, str]) -> dict[str, Any]:
     """Flagsmith shape for "every condition": one ALL rule with an ANY child per condition."""
