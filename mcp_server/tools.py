@@ -25,6 +25,23 @@ READ_TOOLS: frozenset[str] = frozenset({
 
 _ANY_ARGS = {"type": "object", "additionalProperties": True}
 
+# The scope argument the gate requires for each read (mirrors gate.allowlist).
+_SCOPE_ARG = {
+    "list_project_features": "project_pk", "get_feature_flag": "project_pk",
+    "list_project_segments": "project_pk", "get_project_segment": "project_pk",
+    "list_project_environments": "id", "list_feature_segments": "environment",
+    "get_environment_feature_versions": "environment_pk",
+    "get_environment_feature_version_states": "environment_pk",
+    "get_environment_document": "environment",
+}
+
+
+def _read_description(name: str) -> str:
+    base = (f"Allowlisted Flagsmith read ({name}), served by the TrustGate gate, which checks "
+            "the project and environment scope.")
+    arg = _SCOPE_ARG.get(name)
+    return f"{base} Requires the scope argument '{arg}'." if arg else base
+
 TOOLS: list[dict[str, Any]] = [
     {"name": "investigate_incident",
      "description": "Start a TrustGate investigation of a captured incident. It replays the "
@@ -43,10 +60,8 @@ TOOLS: list[dict[str, Any]] = [
                     "a human approves it. This never changes Flagsmith: only an approver can.",
      "inputSchema": {"type": "object", "required": ["investigation_id"],
                      "properties": {"investigation_id": {"type": "string"}}}},
-    *[{"name": name,
-       "description": f"Allowlisted Flagsmith read ({name}), served by the TrustGate gate, "
-                      "which checks the project and environment scope.",
-       "inputSchema": _ANY_ARGS} for name in sorted(READ_TOOLS)],
+    *[{"name": name, "description": _read_description(name), "inputSchema": _ANY_ARGS}
+      for name in sorted(READ_TOOLS)],
 ]
 
 

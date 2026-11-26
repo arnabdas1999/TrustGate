@@ -164,3 +164,12 @@ def test_stdio_loop_reads_and_writes_lines(setup):
     replies = [json.loads(line) for line in stdout.getvalue().splitlines()]
     assert [r.get("id") for r in replies] == [1, 2, None]
     assert replies[2]["error"]["code"] == -32700
+
+
+def test_read_tool_descriptions_name_their_required_scope_argument():
+    from gate.allowlist import REQUIRED_SCOPE_ARGS
+
+    by_name = {t["name"]: t for t in TOOLS}
+    for tool, arg in REQUIRED_SCOPE_ARGS.items():
+        if arg:
+            assert f"'{arg}'" in by_name[tool]["description"], tool
