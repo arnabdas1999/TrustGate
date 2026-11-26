@@ -169,6 +169,12 @@ class ApprovalStore:
                                      (approval_id,)).fetchone()
         return row is not None
 
+    def proposal_used(self, proposal_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute("SELECT 1 FROM used_approvals_v2 WHERE proposal_id = ?",
+                                     (proposal_id,)).fetchone()
+        return row is not None
+
     def check(self, approval: Approval, ops: Sequence[WriteOp]) -> None:
         """Every rule except single use. Raises ApprovalRefused."""
         if not ops:

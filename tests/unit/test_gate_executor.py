@@ -384,3 +384,14 @@ def test_applied_write_is_audited_even_if_marking_written_over_fails(parts, monk
         _executor(parts, mcp, Fingerprints(FP_OK, FP_NEW)).execute(_approve(parts, ops), ops)
     entry = parts[1].entries()[-1]
     assert entry["action"] == "write" and entry["result"] == "applied"
+
+
+def test_reused_approval_is_refused_as_reused_before_the_stale_check(parts):
+    mcp = FakeMcp()
+    ops = _ops()
+    approval = _approve(parts, ops)
+    ex = _executor(parts, mcp, Fingerprints(default=FP_OK), settle_reads=1)
+    ex.execute(approval, ops)
+    with pytest.raises(ApprovalRefused) as err:
+        ex.execute(approval, ops)
+    assert err.value.reason is Refusal.REUSED and len(mcp.sent) == 1

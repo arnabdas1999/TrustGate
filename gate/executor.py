@@ -138,6 +138,13 @@ class Executor:
             self._refuse(approval, str(exc))
             raise
 
+        # Reuse is the most specific reason, so say so before any state checks. (consume()
+        # below stays the atomic guard against two requests racing past this point.)
+        if self._approvals.is_used(approval.approval_id) \
+                or self._approvals.proposal_used(approval.proposal_id):
+            raise self._refused(approval, Refusal.REUSED,
+                                f"approval {approval.approval_id} or its proposal was used")
+
         reg = self._approvals.registration(approval.proposal_id)
         if reg is None:
             raise self._refused(approval, Refusal.BAD_REQUEST,

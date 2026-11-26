@@ -365,3 +365,25 @@ def test_filtered_audit_log_still_recognises_our_other_writes(setup):
         "proposal_id": "prop_1", "environment": "Development",
         "features": ["agent_prompt_version"]}})
     assert r.json()["result"]["outside_trustgate"] == []
+
+
+def test_register_waits_until_the_edge_moves_past_a_written_over_state(tmp_path):
+    reads = iter(["a" * 64, "a" * 64, "b" * 64, "b" * 64])
+    deps = _deps(tmp_path, fingerprint=lambda env: next(reads))
+    deps.approvals.mark_written_over("Development", "a" * 64)  # the edge still lags
+    body = TestClient(create_app(deps, shared_token="")).post(
+        "/gate/register", json={"proposal_id": "p", "ops": [o.model_dump(mode="json")
+                                                            for o in _ops()]}).json()
+    assert body["fingerprint"] == "b" * 64
+
+
+def test_register_gives_up_while_the_edge_still_shows_the_written_over_state(tmp_path):
+    clock = {"t": 0.0}
+    deps = _deps(tmp_path, fingerprint=lambda env: "a" * 64,
+                 sleep=lambda s: clock.__setitem__("t", clock["t"] + s),
+                 monotonic=lambda: clock["t"])
+    deps.approvals.mark_written_over("Development", "a" * 64)
+    r = TestClient(create_app(deps, shared_token="")).post(
+        "/gate/register", json={"proposal_id": "p", "ops": [o.model_dump(mode="json")
+                                                            for o in _ops()]})
+    assert r.status_code == 503 and "last write" in r.json()["detail"]

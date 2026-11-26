@@ -155,15 +155,21 @@ def _settled(d: GateDeps, environment: str, attempts: int = 6) -> str:
     """Two equal reads in a row (the edge document lags writes by a few seconds), within the
     settle time budget so /gate/register answers well inside callers' 30 s timeouts."""
     deadline = d.monotonic() + d.settle_budget_s
-    previous = None
+    previous, lagging = None, False
     for _ in range(attempts):
         current = d.fingerprint(environment)
-        if current == previous:
+        # Right after a write the edge can still show the state the gate just replaced;
+        # never register a proposal against that.
+        lagging = d.approvals.was_written_over(environment, current)
+        if current == previous and not lagging:
             return current
         previous = current
         if d.monotonic() + 1.0 >= deadline:
             break
         d.sleep(1.0)
+    if lagging:
+        raise FingerprintError(f"{environment} still shows the state before the last write; "
+                               "try again in a few seconds")
     raise FingerprintError(f"{environment} did not settle; try again shortly")
 
 
