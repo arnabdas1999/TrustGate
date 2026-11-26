@@ -81,6 +81,8 @@ class GateSettings:
         server_keys = {n: env[_env_key(n)] for n in environments if env.get(_env_key(n))}
         missing += [_env_key(n) for n in environments if n not in server_keys]
         project_id = env.get("GATE_PROJECT_ID", "0")
+        if env.get("GATE_PROJECT_ID") and not project_id.isdigit():
+            missing.append("GATE_PROJECT_ID")  # must be the numeric id; 0 would be a wildcard
         return cls(
             scope=GateScope(project_id=int(project_id) if project_id.isdigit() else 0,
                             project_name=env.get("GATE_PROJECT_NAME", ""),

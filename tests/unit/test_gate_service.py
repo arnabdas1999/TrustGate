@@ -258,3 +258,10 @@ def test_shared_token_guards_every_gate_endpoint(tmp_path):
         == 401
     assert client.get("/gate/audit",
                       headers={"Authorization": "Bearer s3cret-token"}).status_code == 200
+
+
+def test_non_numeric_project_id_leaves_the_gate_unconfigured():
+    s = GateSettings.from_env({"FLAGSMITH_API_KEY": "pre.fix", "APPROVAL_SIGNING_SECRET": "s",
+                               "GATE_PROJECT_ID": "OpsPilot", "GATE_ENVIRONMENTS": "Dev:1",
+                               "GATE_SERVER_KEY_DEV": "ser.x"})
+    assert not s.configured and "GATE_PROJECT_ID" in s.missing
