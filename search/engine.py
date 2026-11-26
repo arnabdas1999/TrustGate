@@ -120,7 +120,7 @@ class SandboxSearch:
 
         # 2 + 3. ddmin, then confirm 1-minimality on fresh runs
         def search_test(subset: list[FlagChange]) -> TestOutcome:
-            return tester.search_test(apply_subset(captured, suspects, subset), subset).outcome
+            return tester.search_test(apply_subset(captured, suspects, subset), subset)
 
         current = suspects
         culprit: list[FlagChange] | None = None

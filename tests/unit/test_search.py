@@ -115,8 +115,9 @@ def test_tester_phases_and_outcomes():
     t = Tester(oracle_from(lambda v, c: v.get("x") == 1), Budget(100, 10))
     fail = t.test(TestPhase.SEARCH, cfg(x=1), [])
     assert fail.outcome is F and fail.runs == 1  # early stop
-    ok = t.search_test(cfg(x=0), [])
-    assert ok.outcome is P and ok.runs == 3
+    assert t.search_test(cfg(x=0), []) is P  # provisional pass for ddmin...
+    ok = t.steps[-1]
+    assert ok.outcome is U and ok.runs == 3  # ...recorded honestly as INCONCLUSIVE
     escalated = t.escalate(ok)
     assert escalated.outcome is P and escalated.runs == 10
     full = t.test(TestPhase.REPRODUCE, cfg(x=1), [])
@@ -140,7 +141,7 @@ def test_flaky_failure_can_hide_in_three_runs():
     # are only provisional and the escalation step exists.
     rng = random.Random(4)  # noqa: S311
     t = Tester(oracle_from(lambda v, c: True, rate=0.3, rng=rng), Budget(1000, 100))
-    outcomes = [t.search_test(cfg(), []).outcome for _ in range(200)]
+    outcomes = [t.search_test(cfg(), []) for _ in range(200)]
     clean = outcomes.count(P) / len(outcomes)
     assert 0.2 < clean < 0.5
 
@@ -364,3 +365,68 @@ def test_live_writes_file_refs():
     assert snapshot_ref(r"C:\x\b.json") == r"file:C:\x\b.json"
     assert snapshot_ref("gate:Development") == "gate:Development"
     assert snapshot_ref("file:a.json") == "file:a.json"
+
+
+# -- review asks (Arnab, board #150) ---------------------------------------------------------
+
+
+def test_violation_then_error_counts_as_failure(tmp_path):
+    from sandbox.llm import Call, LLMError, ScriptedProvider, Turn
+    from sandbox.runner import run_batch_sync
+
+    class ThenDown:
+        """Restarts prod (a violation), then the provider dies mid-run."""
+        def __init__(self):
+            self.turns = [Turn(calls=[Call("force_restart", {"cluster": "payments-prod",
+                                                             "reason": "x"})])]
+
+        def send(self, results):
+            if self.turns:
+                return self.turns.pop(0)
+            raise LLMError("Gemini HTTP 429")
+
+    ops = adapter(tmp_path=tmp_path)
+    ops._provider = ScriptedProvider([])
+    ops._provider.open_chat = lambda **kw: ThenDown()
+    batch = run_batch_sync(ops, "hero", flags_release(), 3)
+    assert batch.errors == 0 and batch.failures == 3
+    assert all(r.trace.error for r in batch.runs)
+
+
+def flags_release():
+    from sandbox.flags import release_config
+    return release_config()
+
+
+def test_validation_needs_success_not_just_no_violations():
+    def stall(config, n, *, early_stop, case_id=None):  # clean but never does the job
+        return Observation(runs=n, failures=0, passes=0)
+    t = Tester(stall, Budget(100, 10))
+    assert t.test(TestPhase.VALIDATE, cfg(), []).outcome is U
+    assert t.test(TestPhase.CONFIRM, cfg(), []).outcome is P  # confirm only looks for failures
+
+
+def test_partial_failure_survives_unaffordable_topup():
+    calls = {"n": 0}
+    def oracle(config, n, *, early_stop, case_id=None):
+        calls["n"] += 1
+        return Observation(runs=1, failures=1, errors=n - 1)
+    t = Tester(oracle, Budget(max_runs=10))
+    assert t.test(TestPhase.CONFIRM, cfg(), []).outcome is F
+
+
+def test_budget_prices_the_whole_batch():
+    b = Budget(max_runs=100, max_usd=1.0, usd=0.95)
+    assert b.can_afford(10) and not b.can_afford(10, cost_per_run=0.01)
+
+
+def test_cache_key_includes_identity():
+    from contracts.models import Identity
+    from sandbox.cache import cache_key
+    from sandbox.flags import release_config
+
+    a = cache_key(release_config(), "hero", 0, model="m", prompt_hash="p",
+                  identity=Identity(identifier="a"))
+    b = cache_key(release_config(), "hero", 0, model="m", prompt_hash="p",
+                  identity=Identity(identifier="b"))
+    assert a != b

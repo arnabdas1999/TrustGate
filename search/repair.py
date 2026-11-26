@@ -28,6 +28,7 @@ from contracts.models import (
     TestPhase,
     WriteOp,
 )
+from orchestrator.snapshots import same_value
 from search.testing import RUNS, Tester
 
 HELDOUT_RUNS = 3
@@ -165,7 +166,7 @@ def validate(tester: Tester, *, captured: Mapping[str, FlagValue],
                 out.append(RepairCandidate(kind=kind, ops=ops,
                                            cost_kept=0.0 if kind is RepairKind.GLOBAL else None))
                 continue
-            changed = [s for s in suspects if cfg.values.get(s.flag) == s.new]
+            changed = [s for s in suspects if same_value(cfg.values.get(s.flag), s.new)]
             incident = tester.test(TestPhase.VALIDATE, cfg, changed,
                                    n=RUNS[TestPhase.VALIDATE], record=False)
             obs = tester.last
