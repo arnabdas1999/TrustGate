@@ -4,7 +4,12 @@ verifier after the approved write.
 Status flow: CAPTURING -> SEARCHING -> VALIDATING -> PROPOSED -> (API: APPROVED/APPLIED)
 -> VERIFIED, or FAILED with a code-built rollback proposal that needs its own approval.
 Exits: NOT_REPRODUCIBLE, INCONCLUSIVE, STALE (-> reinvestigate). Timestamps go into
-Investigation.timestamps: alert (API), first_suspect, proposal, approved (API), verified.
+Investigation.timestamps: alert (API), first_suspect (search isolated the culprit), proposal,
+approved (API), verified.
+
+After a failed read-back the investigation stays FAILED: the rollback proposal (id
+"<original>_rollback") gets VERIFIED or FAILED itself, and original_proposal_id() recovers the
+repair's id from it.
 
 Nothing here touches Flagsmith directly: reads and fingerprints go through the gate, and
 writes only happen when the API sends a signed approval to the gate.
@@ -48,6 +53,17 @@ from verifier.readback import FlagSource, VerifyStatus, verify
 
 log = logging.getLogger("trustgate.orchestrator")
 ROLLBACK_PREFIX = "Rollback of"
+ROLLBACK_SUFFIX = "_rollback"
+
+
+def is_rollback(proposal_id: str) -> bool:
+    """By id, never by explanation text (an LLM-written explanation could start with anything)."""
+    return proposal_id.endswith(ROLLBACK_SUFFIX)
+
+
+def original_proposal_id(proposal_id: str) -> str:
+    """The repair a rollback undoes (the id itself for a repair)."""
+    return proposal_id.removesuffix(ROLLBACK_SUFFIX)
 
 
 @dataclass(frozen=True)
@@ -173,40 +189,64 @@ class Orchestrator:
     # -- after the approved write ------------------------------------------------------------
 
     def verify_after_write(self, investigation_id: str) -> VerifyStatus:
+        """Runs after the gate has written. Never leaves the investigation in APPLIED: any
+        failure (missing or wrong ser. key, gate 503, ...) ends in FAILED, and a failed repair
+        gets a rollback proposal, built in its own try block."""
         inv = self.repo.get_investigation(investigation_id)
+        if inv is None:
+            raise KeyError(investigation_id)
         proposal = self.repo.get_proposal(inv.proposal_id or "")
-        incident = self.repo.get_incident(inv.incident_id)
-        cfg = self.configs[inv.domain]
-        release_values = {c.flag: c.new for c in inv.suspects}
-        expected = expectations(proposal.candidate.ops, incident.identity, cfg.control_identity,
-                                release_values)
-        result = verify(expected, self.flag_source(cfg.environment),
-                        timeout_s=self.verify_timeout_s, sleep=self.sleep)
-        proposal.readback = result.readbacks
-        is_rollback = proposal.explanation.startswith(ROLLBACK_PREFIX)
-        if result.status is VerifyStatus.VERIFIED:
+        if proposal is None:
+            log.error("verify %s: no proposal %r", inv.id, inv.proposal_id)
+            self._save(inv, InvestigationStatus.FAILED)
+            return VerifyStatus.FAILED
+        rollback = is_rollback(proposal.id)
+        try:
+            result = self._read_back(inv, proposal)
+            status, detail = result.status, result.detail
+            proposal.readback = result.readbacks
+        except Exception as exc:  # noqa: BLE001 (the write already happened: never stay APPLIED)
+            log.exception("verify %s: read-back could not run", inv.id)
+            status, detail = VerifyStatus.FAILED, f"read-back could not run: {type(exc).__name__}"
+
+        if status is VerifyStatus.VERIFIED:
             proposal.state = ProposalState.VERIFIED
             self.repo.put_proposal(proposal)
-            if not is_rollback:
+            if rollback:  # the repair failed and is now undone: the investigation stays FAILED
+                self._save(inv, InvestigationStatus.FAILED)
+            else:
                 inv.timestamps.verified = self.clock()
                 self._save(inv, InvestigationStatus.VERIFIED)
-            return result.status
+            return status
 
-        proposal.state = ProposalState.FAILED
+        if proposal.state is ProposalState.APPLIED:
+            proposal.state = ProposalState.FAILED
         self.repo.put_proposal(proposal)
-        if not is_rollback:
-            self._propose_rollback(inv, proposal, release_values, cfg, result.detail)
+        if not rollback:
+            try:
+                self._propose_rollback(inv, proposal, detail)
+            except Exception:  # noqa: BLE001 (e.g. gate 503): FAILED still shows, no rollback card
+                log.exception("verify %s: could not propose a rollback", inv.id)
         self._save(inv, InvestigationStatus.FAILED)
-        return result.status
+        return status
 
-    def _propose_rollback(self, inv: Investigation, failed: Proposal,
-                          release_values: dict[str, Any], cfg: DomainConfig, why: str) -> None:
-        ops = inverse_ops(failed.candidate.ops, release_values)
+    def _read_back(self, inv: Investigation, proposal: Proposal) -> Any:
+        incident = self.repo.get_incident(inv.incident_id)
+        cfg = self.configs[inv.domain]
+        expected = expectations(proposal.candidate.ops, incident.identity, cfg.control_identity,
+                                {c.flag: c.new for c in inv.suspects})
+        return verify(expected, self.flag_source(cfg.environment),
+                      timeout_s=self.verify_timeout_s, sleep=self.sleep)
+
+    def _propose_rollback(self, inv: Investigation, failed: Proposal, why: str) -> None:
+        cfg = self.configs[inv.domain]
+        ops = inverse_ops(failed.candidate.ops, {c.flag: c.new for c in inv.suspects})
         explanation = (f"{ROLLBACK_PREFIX} {failed.id}: read-back did not confirm the repair "
                        f"({why or 'no detail'}). This undoes it; it needs its own approval.")
         rollback, calls = build_proposal(inv.id, failed.candidate, ops, self.gate,
                                          environment=cfg.environment, explanation=explanation,
-                                         now=self.clock(), sleep=self.sleep)
+                                         now=self.clock(), sleep=self.sleep,
+                                         proposal_id=failed.id + ROLLBACK_SUFFIX)
         self.repo.put_proposal(rollback)
         self.repo.put_calls(rollback.id, calls)
-        inv.proposal_id = rollback.id
+        inv.proposal_id = rollback.id  # the UI shows the card to approve; the id names the repair

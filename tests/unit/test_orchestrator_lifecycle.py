@@ -175,7 +175,7 @@ def test_failed_verification_proposes_a_rollback(setup):
     assert inv.status is InvestigationStatus.FAILED
     assert repo.get_proposal(original.id).state is ProposalState.FAILED
     rollback = repo.get_proposal(inv.proposal_id)
-    assert rollback.id != original.id and rollback.state is ProposalState.PROPOSED
+    assert rollback.id == original.id + "_rollback" and rollback.state is ProposalState.PROPOSED
     assert [(o.tool, o.feature) for o in rollback.candidate.ops] == [
         ("delete_feature_segment", "agent_prompt_version")]
     assert rollback.explanation.startswith("Rollback of")
@@ -202,6 +202,122 @@ def test_reinvestigate_only_from_stale(setup):
     orch.run("inv_1")
     with pytest.raises(ValueError, match="STALE"):
         orch.reinvestigate("inv_1")
+
+
+# --- verify_after_write never leaves the investigation in APPLIED (PR #1 blocker) ---------------
+
+from orchestrator.gate_client import GateBusy  # noqa: E402
+from orchestrator.lifecycle import ROLLBACK_SUFFIX, original_proposal_id  # noqa: E402
+from orchestrator.wiring import ConfigError, flag_source_from_env  # noqa: E402
+from verifier.readback import EdgeFlagSource, VerifyStatus  # noqa: E402
+
+
+def _make_with(setup, flag_source):
+    repo, gate, _, _ = setup
+    return Orchestrator(repo=repo, gate=gate, search=ScriptedSearch(["agent_prompt_version"]),
+                        configs=CONFIG, flag_source=flag_source, sleep=lambda s: None,
+                        verify_timeout_s=0)
+
+
+def _assert_failed_with_rollback(repo, original_id):
+    inv = repo.get_investigation("inv_1")
+    assert inv.status is InvestigationStatus.FAILED
+    assert repo.get_proposal(original_id).state is ProposalState.FAILED
+    rollback = repo.get_proposal(inv.proposal_id)
+    assert rollback.id == original_id + ROLLBACK_SUFFIX
+    assert rollback.state is ProposalState.PROPOSED
+    assert original_proposal_id(rollback.id) == original_id
+
+
+def test_missing_server_key_fails_and_proposes_a_rollback(setup):
+    repo = setup[0]
+    orch = _make_with(setup, flag_source_from_env({}))  # FLAGSMITH_SERVER_KEY_DEVELOPMENT unset
+    orch.run("inv_1")
+    original = _applied(repo)
+    with pytest.raises(ConfigError):  # what used to escape and leave APPLIED behind
+        flag_source_from_env({})("Development")
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+    _assert_failed_with_rollback(repo, original.id)
+
+
+def test_non_ser_key_fails_and_proposes_a_rollback(setup):
+    repo = setup[0]
+    orch = _make_with(setup, lambda env: EdgeFlagSource("not-a-ser-key"))
+    orch.run("inv_1")
+    original = _applied(repo)
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+    _assert_failed_with_rollback(repo, original.id)
+
+
+def test_gate_503_on_the_rollback_still_ends_failed(setup):
+    repo, gate, flagsrc, make = setup
+    orch = make()
+    orch.run("inv_1")
+    original = _applied(repo)
+    flagsrc.applied = False
+
+    def busy(ops, proposal_id):
+        raise GateBusy("gate /gate/register returned HTTP 503", status=503)
+    gate.register = busy
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+    inv = repo.get_investigation("inv_1")
+    assert inv.status is InvestigationStatus.FAILED
+    assert inv.proposal_id == original.id  # no rollback card, but not stuck in APPLIED
+    assert repo.get_proposal(original.id).state is ProposalState.FAILED
+
+
+def _approve_rollback(repo):
+    inv = repo.get_investigation("inv_1")
+    inv.status = InvestigationStatus.APPLIED  # what the API sets after the rollback write
+    repo.put_investigation(inv)
+    rb = repo.get_proposal(inv.proposal_id)
+    rb.state = ProposalState.APPLIED
+    repo.put_proposal(rb)
+    return rb
+
+
+def test_verified_rollback_leaves_the_investigation_failed_not_applied(setup):
+    repo, _, flagsrc, make = setup
+    orch = make()
+    orch.run("inv_1")
+    original = _applied(repo)
+    flagsrc.applied = False
+    orch.verify_after_write("inv_1")
+    rb = _approve_rollback(repo)
+    # Undone: both identities are served the release again, which is what the rollback expects.
+    assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED
+    inv = repo.get_investigation("inv_1")
+    assert inv.status is InvestigationStatus.FAILED and inv.timestamps.verified is None
+    assert repo.get_proposal(rb.id).state is ProposalState.VERIFIED
+    assert repo.get_proposal(original.id).state is ProposalState.FAILED
+    assert original_proposal_id(inv.proposal_id) == original.id
+
+
+def test_failed_rollback_does_not_propose_another(setup):
+    repo, _, flagsrc, make = setup
+    orch = make()
+    orch.run("inv_1")
+    _applied(repo)
+    flagsrc.applied = False
+    orch.verify_after_write("inv_1")
+    rb = _approve_rollback(repo)
+    flagsrc.applied = True  # the override is still served: the rollback didn't land
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+    inv = repo.get_investigation("inv_1")
+    assert inv.status is InvestigationStatus.FAILED and inv.proposal_id == rb.id
+    assert repo.get_proposal(rb.id).state is ProposalState.FAILED
+
+
+def test_an_explanation_starting_like_a_rollback_is_still_a_repair(setup):
+    repo, _, flagsrc, make = setup
+    orch = make()
+    orch.run("inv_1")
+    original = _applied(repo)
+    original.explanation = "Rollback of nothing: an LLM could write this"
+    repo.put_proposal(original)
+    flagsrc.applied = False
+    orch.verify_after_write("inv_1")
+    _assert_failed_with_rollback(repo, original.id)
 
 
 # --- LLM ordering and explanation ------------------------------------------------------------
