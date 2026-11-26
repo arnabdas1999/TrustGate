@@ -42,6 +42,7 @@ from orchestrator.proposals import (
     ProposalError,
     build_ops,
     build_proposal,
+    check_ops_match_validation,
     expectations,
     inverse_ops,
     passing_candidates,
@@ -137,8 +138,6 @@ class Orchestrator:
         inv.suspects = ordering.suspects
         if ordering.note:
             log.info("investigation %s: %s", inv.id, ordering.note)
-        if inv.suspects:  # a ranking exists (LLM, or diff order in plain mode / fallback)
-            inv.timestamps.first_suspect = self.clock()
         view = self.gate.read("get_environment_document", {"environment": cfg.environment})
         try:
             inv.segment = triage(segments_document(view["view"]), incident.identity.traits)
@@ -156,13 +155,16 @@ class Orchestrator:
             return self._save(inv, InvestigationStatus.NOT_REPRODUCIBLE)
         if result.outcome is SearchOutcome.INCONCLUSIVE:
             return self._save(inv, InvestigationStatus.INCONCLUSIVE)
+        if inv.culprit_set:  # time to first suspect = when the search isolated the culprit
+            inv.timestamps.first_suspect = result.culprit_found_at or self.clock()
         self._save(inv, InvestigationStatus.VALIDATING)
 
         for cand in passing_candidates(result.candidates):
             try:
                 ops = build_ops(cand.kind, inv.culprit_set, inv.suspects, segment=inv.segment,
                                 project=cfg.project, environment=cfg.environment)
-            except ProposalError as exc:  # e.g. no segment matched: try the next candidate
+                check_ops_match_validation(ops, cand, inv.suspects)
+            except ProposalError as exc:  # no segment, or not what was validated: next one
                 log.info("investigation %s: skipping %s: %s", inv.id, cand.kind, exc)
                 continue
             text = explain(culprit_set=inv.culprit_set, segment=inv.segment, chosen=cand,

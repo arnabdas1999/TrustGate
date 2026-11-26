@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
@@ -47,6 +48,9 @@ class SearchResult(BaseModel):
     candidates: list[RepairCandidate] = Field(default_factory=list)
     runs_used: int = 0
     usd_used: float = 0.0
+    # When the search isolated (confirmed) the culprit, before repair validation. The
+    # orchestrator stamps first_suspect with it, or with the time search.run returns.
+    culprit_found_at: datetime | None = None
 
 
 class SearchUnavailable(Exception):
@@ -69,11 +73,36 @@ def _config(changes: Sequence[FlagChange]) -> FlagConfig:
                       source=ConfigSource.OVERRIDE)
 
 
-class ScriptedSearch:
-    """Deterministic stand-in: the configured flags are the culprits, every check is scripted."""
+def _revert(values: Mapping[str, object], changes: Sequence[FlagChange]) -> dict:
+    out = dict(values)
+    for c in changes:
+        if c.old is None:
+            out.pop(c.flag, None)
+        else:
+            out[c.flag] = c.old
+    return out
 
-    def __init__(self, culprits: Sequence[str]):
+
+def _candidate_config(kind: RepairKind, captured: Mapping[str, object],
+                      suspects: Sequence[FlagChange], culprit: Sequence[FlagChange],
+                      segment: str | None) -> FlagConfig | None:
+    """The configuration a candidate is validated under, shaped as search/repair.py does."""
+    if kind is RepairKind.SEGMENT_OVERRIDE:
+        if not segment:
+            return None
+        return FlagConfig(values=dict(captured), source=ConfigSource.OVERRIDE,
+                          segment_overrides={segment: {c.flag: c.old for c in culprit}})
+    changes = culprit if kind is RepairKind.SURGICAL else suspects
+    return FlagConfig(values=_revert(captured, changes), source=ConfigSource.OVERRIDE)
+
+
+class ScriptedSearch:
+    """Deterministic stand-in: the configured flags are the culprits, every check is scripted.
+    `segment` is the segment it validates the override in (the hero cases' tier0_production)."""
+
+    def __init__(self, culprits: Sequence[str], segment: str | None = "tier0_production"):
         self.culprits = list(culprits)
+        self.segment = segment
 
     def run(self, incident: Incident, suspects: Sequence[FlagChange],
             mode: InvestigationMode) -> SearchResult:
@@ -93,28 +122,30 @@ class ScriptedSearch:
                                     outcome=TestOutcome.FAIL if fails else TestOutcome.PASS))
         steps.append(TestResult(phase=TestPhase.CONFIRM, config=_config(culprit), changes=culprit,
                                 runs=10, failures=8, outcome=TestOutcome.FAIL))
-        validation = TestResult(phase=TestPhase.VALIDATE, config=_config(release), changes=release,
-                                runs=20, failures=0, outcome=TestOutcome.PASS)
-        candidates = [
-            RepairCandidate(kind=RepairKind.SEGMENT_OVERRIDE, ops=[], validation=validation,
-                            heldout_passes=21, heldout_runs=21, baseline_heldout_passes=21,
-                            cost_kept=1.0, violations=0),
-            RepairCandidate(kind=RepairKind.SURGICAL, ops=[], validation=validation,
-                            heldout_passes=20, heldout_runs=21, baseline_heldout_passes=21,
-                            cost_kept=0.8, violations=0),
-            RepairCandidate(kind=RepairKind.GLOBAL, ops=[], validation=validation,
-                            heldout_passes=18, heldout_runs=21, baseline_heldout_passes=21,
-                            cost_kept=0.0, violations=0),
-        ]
-        steps.append(validation)
+        captured = dict(incident.resolved_flags.values)
+        scripted = {RepairKind.SEGMENT_OVERRIDE: (21, 1.0), RepairKind.SURGICAL: (20, 0.8),
+                    RepairKind.GLOBAL: (18, 0.0)}
+        candidates = []
+        for kind, (held, kept) in scripted.items():
+            cfg = _candidate_config(kind, captured, release, culprit, self.segment)
+            if cfg is None:
+                continue
+            validation = TestResult(phase=TestPhase.VALIDATE, config=cfg, changes=release,
+                                    runs=20, failures=0, outcome=TestOutcome.PASS)
+            steps.append(validation)
+            candidates.append(RepairCandidate(
+                kind=kind, ops=[], validation=validation, heldout_passes=held,
+                heldout_runs=21, baseline_heldout_passes=21, cost_kept=kept, violations=0))
         return SearchResult(outcome=SearchOutcome.FOUND, culprit_set=culprit, steps=steps,
                             candidates=candidates, runs_used=sum(s.runs for s in steps))
 
 
 def search_from_env(env: Mapping[str, str] | None = None) -> SearchEngine:
-    """TRUSTGATE_SEARCH=scripted:flag_a,flag_b picks ScriptedSearch; unset means unavailable."""
+    """TRUSTGATE_SEARCH=scripted:flag_a,flag_b[@segment] picks ScriptedSearch (segment default
+    tier0_production); unset means unavailable."""
     value = (os.environ if env is None else env).get("TRUSTGATE_SEARCH", "")
     if value.startswith("scripted:"):
-        return ScriptedSearch([f.strip() for f in value[len("scripted:"):].split(",")
-                               if f.strip()])
+        flags, _, segment = value[len("scripted:"):].partition("@")
+        return ScriptedSearch([f.strip() for f in flags.split(",") if f.strip()],
+                              segment=segment.strip() or "tier0_production")
     return UnavailableSearch()

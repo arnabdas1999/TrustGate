@@ -4,6 +4,8 @@ The search validates repair candidates (narrowest first). This module:
 - picks the narrowest candidate that passed validation
 - builds its WriteOps from the candidate's kind, the culprit set and the segment, using the
   typed baseline values from the release diff
+- checks those ops write exactly what the search validated (validation.config: feature,
+  value, segment), so a segment or value the search never tested can't be proposed
 - registers the proposal with the gate, which records payload_hash(ops) and its own settled
   fingerprint and renders the exact MCP call(s) the proposal card shows
 - binds the proposal to that hash, that fingerprint and a 15-minute expiry
@@ -31,6 +33,7 @@ from contracts.models import (
     WriteOp,
 )
 from orchestrator.gate_client import GateBusy
+from orchestrator.snapshots import same_value
 from verifier.readback import Expectation
 
 PROPOSAL_TTL = timedelta(minutes=15)
@@ -76,6 +79,41 @@ def build_ops(kind: RepairKind, culprit_set: Sequence[FlagChange],
     changes = culprit_set if kind is RepairKind.SURGICAL else suspects
     return [WriteOp(tool="update_feature_state", feature=c.flag, value=_old_value(c), **base)
             for c in sorted(changes, key=lambda c: c.flag)]
+
+
+def check_ops_match_validation(ops: Sequence[WriteOp], candidate: RepairCandidate,
+                               suspects: Sequence[FlagChange]) -> None:
+    """Raise ProposalError unless the ops write exactly what validation.config tested.
+
+    Segment override: validation.config.segment_overrides must hold the same (segment, feature)
+    pairs with the same values. Surgical/global: no overrides; every op's value equals the
+    validated value, and the flags the validated config moved off the release are exactly the
+    ops' flags. Values compare loosely ("6" == 6), like the release diff.
+    """
+    if candidate.validation is None:
+        raise ProposalError("the candidate was never validated")
+    cfg = candidate.validation.config
+    if candidate.kind is RepairKind.SEGMENT_OVERRIDE:
+        tested = {(seg, f): v for seg, flags in cfg.segment_overrides.items()
+                  for f, v in flags.items()}
+        built = {(op.segment, op.feature): op.value for op in ops
+                 if op.tool == "create_segment_override"}
+        if len(built) != len(ops) or tested.keys() != built.keys() or not all(
+                same_value(tested[k], built[k]) for k in built):
+            raise ProposalError(f"segment override ops {sorted(built)} differ from what the "
+                                f"search validated {sorted(tested)}")
+        return
+    if cfg.segment_overrides or any(op.tool != "update_feature_state" for op in ops):
+        raise ProposalError(f"{candidate.kind.value} ops don't match a validated config without "
+                            "segment overrides")
+    for op in ops:
+        if op.feature not in cfg.values or not same_value(cfg.values[op.feature], op.value):
+            raise ProposalError(f"{op.feature}={op.value!r} was not the validated value "
+                                f"({cfg.values.get(op.feature)!r})")
+    moved = {s.flag for s in suspects if not same_value(cfg.values.get(s.flag), s.new)}
+    if moved != {op.feature for op in ops}:
+        raise ProposalError(f"validated config changed {sorted(moved)}, ops change "
+                            f"{sorted(op.feature for op in ops)}")
 
 
 def inverse_ops(ops: Sequence[WriteOp], release_values: Mapping[str, Any]) -> list[WriteOp]:

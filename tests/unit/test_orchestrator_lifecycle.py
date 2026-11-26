@@ -204,6 +204,34 @@ def test_reinvestigate_only_from_stale(setup):
         orch.reinvestigate("inv_1")
 
 
+def test_search_validated_another_segment_so_the_proposal_falls_back_to_surgical(setup):
+    repo, _, _, make = setup
+    make(ScriptedSearch(["agent_prompt_version"], segment="high_value_wires")).run("inv_1")
+    inv = repo.get_investigation("inv_1")
+    assert inv.segment == "tier0_production"  # triage on Flagsmith's segments
+    proposal = repo.get_proposal(inv.proposal_id)
+    assert proposal.candidate.kind is RepairKind.SURGICAL  # never an untested segment write
+
+
+class StampedSearch(ScriptedSearch):
+    def run(self, incident, suspects, mode):
+        return super().run(incident, suspects, mode).model_copy(
+            update={"culprit_found_at": datetime(2026, 11, 26, 19, 0, 42, tzinfo=UTC)})
+
+
+def test_first_suspect_is_when_the_search_isolated_the_culprit(setup):
+    repo, _, _, make = setup
+    make(StampedSearch(["agent_prompt_version"])).run("inv_1")
+    assert repo.get_investigation("inv_1").timestamps.first_suspect == datetime(
+        2026, 11, 26, 19, 0, 42, tzinfo=UTC)
+
+
+def test_no_first_suspect_without_a_culprit(setup):
+    repo, _, _, make = setup
+    make(ScriptedSearch(["agent_temperature"])).run("inv_1")
+    assert repo.get_investigation("inv_1").timestamps.first_suspect is None
+
+
 # --- verify_after_write never leaves the investigation in APPLIED (PR #1 blocker) ---------------
 
 from orchestrator.gate_client import GateBusy  # noqa: E402

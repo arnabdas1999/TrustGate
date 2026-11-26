@@ -83,3 +83,26 @@ def test_unavailable_search_says_so():
 ])
 def test_search_from_env(value, kind):
     assert isinstance(search_from_env({"TRUSTGATE_SEARCH": value}), kind)
+
+
+def test_scripted_validation_configs_are_shaped_like_search_repair():
+    result = ScriptedSearch(["agent_prompt_version"]).run(incident(), SUSPECTS,
+                                                          InvestigationMode.PLAIN)
+    seg, surgical, global_ = (c.validation.config for c in result.candidates)
+    assert seg.segment_overrides == {"tier0_production": {"agent_prompt_version": "v1_strict"}}
+    assert seg.values["agent_prompt_version"] == "v2_fast"  # the release, outside the segment
+    assert surgical.segment_overrides == {} and surgical.values["agent_prompt_version"] == \
+        "v1_strict"
+    assert global_.values["agent_tool_policy"] == "restricted"
+
+
+def test_scripted_without_a_segment_skips_the_segment_candidate():
+    result = ScriptedSearch(["agent_prompt_version"], segment=None).run(
+        incident(), SUSPECTS, InvestigationMode.PLAIN)
+    assert [c.kind for c in result.candidates] == [RepairKind.SURGICAL, RepairKind.GLOBAL]
+
+
+def test_search_from_env_reads_an_optional_segment():
+    engine = search_from_env({"TRUSTGATE_SEARCH": "scripted:agent_prompt_version@high_value_wires"})
+    assert engine.culprits == ["agent_prompt_version"] and engine.segment == "high_value_wires"
+    assert search_from_env({"TRUSTGATE_SEARCH": "scripted:a"}).segment == "tier0_production"
