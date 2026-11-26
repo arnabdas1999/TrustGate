@@ -22,7 +22,6 @@ from orchestrator.proposals import (
     choose_candidate,
     expectations,
     inverse_ops,
-    settled_fingerprint,
 )
 
 NOW = datetime(2026, 11, 26, 19, 0, tzinfo=UTC)
@@ -115,17 +114,6 @@ class FakeGate:
         self.rendered.append((ops, proposal_id))
         return {"proposal_id": proposal_id, "fingerprint": self.fingerprints[-1],
                 "payload_hash": "ignored", "calls": self.render(ops, proposal_id)[:1]}
-
-
-def test_settled_fingerprint_waits_for_two_equal_reads():
-    gate = FakeGate(["a", "b", "b"])
-    assert settled_fingerprint(gate, "Development", sleep=lambda s: None) == "b"
-
-
-def test_settled_fingerprint_gives_up():
-    gate = FakeGate(["a", "b", "c", "d"])
-    with pytest.raises(ProposalError, match="settle"):
-        settled_fingerprint(gate, "Development", attempts=4, sleep=lambda s: None)
 
 
 def test_build_proposal_binds_hash_fingerprint_expiry_and_exact_call():

@@ -89,20 +89,6 @@ def inverse_ops(ops: Sequence[WriteOp], release_values: Mapping[str, Any]) -> li
     return inverse
 
 
-def settled_fingerprint(gate: Any, environment: str, *, attempts: int = 15,
-                        interval_s: float = 2.0,
-                        sleep: Callable[[float], None] = time.sleep) -> str:
-    previous = None
-    for attempt in range(attempts):
-        current = gate.fingerprint(environment)
-        if current == previous:
-            return current
-        previous = current
-        if attempt + 1 < attempts:
-            sleep(interval_s)
-    raise ProposalError(f"{environment} did not settle; try again in a minute")
-
-
 def build_proposal(investigation_id: str, candidate: RepairCandidate, ops: list[WriteOp],
                    gate: Any, *, environment: str, explanation: str,
                    now: datetime | None = None, proposal_id: str | None = None,
