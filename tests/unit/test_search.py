@@ -430,3 +430,24 @@ def test_cache_key_includes_identity():
     b = cache_key(release_config(), "hero", 0, model="m", prompt_hash="p",
                   identity=Identity(identifier="b"))
     assert a != b
+
+
+# -- determinism (Naman, board #160) ----------------------------------------------------------
+
+
+def test_identical_runs_are_one_behaviour_not_a_rate():
+    line = evidence_line(0, 20, distinct=1)
+    assert "all identical" in line and "95%" not in line
+    assert evidence_line(0, 20, distinct=4).endswith("(4 distinct behaviours)")
+    assert "95% confidence" in evidence_line(0, 20, distinct=4)
+    assert evidence_line(2, 20, distinct=1) == "2 failures in 20 runs"
+
+
+def test_sandbox_oracle_counts_distinct_behaviours(tmp_path):
+    from sandbox.flags import baseline_config
+    from tests.unit.sandbox_helpers import adapter as scripted
+
+    ops = scripted(tmp_path=tmp_path)
+    oracle = SandboxOracle(ops, incident(), parallel=2)
+    obs = oracle(baseline_config(), 4, early_stop=False)
+    assert obs.runs == 4 and len(obs.behaviours) == 1  # a scripted agent is deterministic

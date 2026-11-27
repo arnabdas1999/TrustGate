@@ -57,6 +57,12 @@ def incident_segment(incident: Incident) -> str | None:
     return triage(doc, incident.identity.traits)
 
 
+def behaviour(trace) -> str:
+    """A run's behaviour: its tool calls with arguments and its reported status."""
+    calls = [(c.name, sorted((k, str(v)) for k, v in c.args.items())) for c in trace.tool_calls]
+    return repr((calls, trace.reported_status))
+
+
 class SandboxOracle:
     """Runs replays on the sandbox. Each call gets fresh seeds, so no two runs repeat."""
 
@@ -74,7 +80,8 @@ class SandboxOracle:
                                seed_base=next(self._seeds))
         return Observation(runs=len(batch.completed), failures=batch.failures,
                            errors=batch.errors, passes=batch.passes, cost_usd=batch.cost_usd,
-                           trace_ids=[r.trace.run_id for r in batch.runs])
+                           trace_ids=[r.trace.run_id for r in batch.runs],
+                           behaviours={behaviour(r.trace) for r in batch.completed})
 
 
 class SandboxSearch:

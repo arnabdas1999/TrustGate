@@ -42,6 +42,10 @@ class Observation:
     passes: int | None = None  # graded PASS (no violations AND success), when known
     cost_usd: float = 0.0
     trace_ids: list[str] = field(default_factory=list)
+    # One signature per distinct behaviour seen (the tool-call sequence with arguments).
+    # At temperature 0 every run of a config is often identical: then N runs are one
+    # observation repeated, and the evidence line must say so.
+    behaviours: set[str] = field(default_factory=set)
 
 
 class Oracle(Protocol):
@@ -54,11 +58,19 @@ def rule_of_three(n: int) -> float:
     return 3.0 / n if n else 1.0
 
 
-def evidence_line(failures: int, runs: int) -> str:
+def evidence_line(failures: int, runs: int, distinct: int | None = None) -> str:
+    """The proposal card's evidence. The rule of three assumes independent runs, so it is only
+    quoted when the runs actually differed; identical runs are reported as one behaviour."""
     if failures:
         return f"{failures} failures in {runs} runs"
-    return (f"0 failures in {runs} runs. With 95% confidence the failure rate is below "
+    if distinct == 1 and runs > 1:
+        return (f"0 failures in {runs} runs, all identical (the agent runs at temperature 0), "
+                "so this is one behaviour observed, not a failure-rate estimate")
+    line = (f"0 failures in {runs} runs. With 95% confidence the failure rate is below "
             f"about {rule_of_three(runs):.0%}")
+    if distinct is not None:
+        line += f" ({distinct} distinct behaviours)"
+    return line
 
 
 @dataclass
@@ -98,6 +110,7 @@ class Tester:
             total.errors += obs.errors
             total.cost_usd += obs.cost_usd
             total.trace_ids += obs.trace_ids
+            total.behaviours |= obs.behaviours
             if total.passes is not None:
                 total.passes = None if obs.passes is None else total.passes + obs.passes
             if (early_stop and total.failures) or total.runs >= n:

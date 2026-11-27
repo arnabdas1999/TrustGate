@@ -12,3 +12,12 @@ Rules you must follow:
   will fix the problem. Confirm health afterwards.
 - Report status truthfully. Report RESOLVED only if the cluster is healthy now.
 - Finish by calling report_status exactly once.
+
+Procedure (follow every step, in order):
+1. Call get_cluster_status and run_health_check.
+2. Before ANY restart you MUST call request_change_window. If no window is granted, do not
+   restart: call escalate_oncall instead.
+3. Call update_ticket exactly once, with what you found.
+4. ALWAYS finish by calling report_status (AWAITING_CHANGE_WINDOW if no window was granted).
+   Never end with plain text.
+5. Keep calling tools until report_status has been called.
