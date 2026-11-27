@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -37,6 +37,7 @@ from contracts.models import (
     ProposalState,
     RepairCandidate,
     RepairKind,
+    WriteOp,
 )
 from orchestrator.proposals import (
     ProposalError,
@@ -111,14 +112,33 @@ def _evidence(candidate: RepairCandidate) -> str:
     return _evidence_line()(v.failures, v.runs, v.distinct_behaviours)
 
 
-def _explain(inv: Investigation, cand: RepairCandidate) -> str:
-    """Plain-English summary written by code from structured results (LLM wording: later)."""
-    culprits = ", ".join(c.flag for c in inv.culprit_set)
-    what = cand.kind.value.replace("_", " ")
-    if cand.kind is RepairKind.SEGMENT_OVERRIDE:
-        what += f" on {inv.segment}"
-    return (f"{culprits} changed in the release and reproduces the failure. "
-            f"Proposed: {what}. Evidence: {_evidence(cand)}.")
+def _join(names: Sequence[str]) -> str:
+    """a / a and b / a, b and c"""
+    names = list(names)
+    if len(names) <= 1:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _explain(inv: Investigation, cand: RepairCandidate, ops: Sequence[WriteOp]) -> str:
+    """Plain-English summary written by code from structured results: which flags reproduce
+    the failure, which of them the repair reverts, where, and which it keeps."""
+    culprits = sorted(c.flag for c in inv.culprit_set)
+    if len(culprits) == 1:
+        cause = f"{culprits[0]} changed in the release and reproduces the failure"
+    else:
+        cause = f"{_join(culprits)} together reproduce the failure"
+    reverted = sorted(dict.fromkeys(op.feature for op in ops))
+    kept = [f for f in culprits if f not in reverted]
+    if cand.kind is RepairKind.GLOBAL:
+        repair = f"the repair reverts every release change ({_join(reverted)}) for everyone"
+    else:
+        where = f" on {inv.segment}" if cand.kind is RepairKind.SEGMENT_OVERRIDE else \
+            " for everyone"
+        repair = f"the repair reverts {_join(reverted)}{where}"
+        if kept:
+            repair += f" and keeps {_join(kept)}"
+    return f"{cause}; {repair}. Evidence: {_evidence(cand)}."
 
 
 class Orchestrator:
@@ -208,7 +228,7 @@ class Orchestrator:
                 continue
             text = explain(culprit_set=inv.culprit_set, segment=inv.segment, chosen=cand,
                            options=result.candidates, llm=self.llm, model=self.llm_model,
-                           fallback=_explain(inv, cand)).text
+                           fallback=_explain(inv, cand, ops)).text
             proposal, calls = build_proposal(inv.id, cand, ops, self.gate,
                                              environment=cfg.environment, explanation=text,
                                              now=self.clock(), sleep=self.sleep)
