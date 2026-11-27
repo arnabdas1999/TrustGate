@@ -241,7 +241,8 @@ segment, value). Injected text in traces or descriptions can at worst reorder su
 - The approver's name isn't covered by the signature yet. The gate records it as claimed,
   not verified.
 - The write lock lives in one process, so the gate must run as a single worker.
-- An API–gate bearer token exists but is off by default.
+- The API–gate bearer token (`GATE_SHARED_TOKEN`) is off unless set; the setup scripts set it
+  in both files.
 
 ## Use TrustGate from Claude Code (MCP)
 
@@ -311,18 +312,31 @@ sealed; only their SHA-256 hashes are committed before the runs (`bench/keys/has
 Target mix: 1 to 2 of the 6 cases are two-flag interactions. _Final seeds and the exact mix are
 filled in here at CP7._ Dev cases used for tuning are never reported.
 
+**Models and settings.** The agents and the investigator run on local models through Ollama:
+`model_flagship` = `qwen3:14b`, `model_cheap` = `qwen3:8b`, `think=false`, one replay at a time
+(`SANDBOX_PARALLEL=1`), on one MacBook (M4 Pro). The model under test is never swapped. The
+agent's temperature is one of the flags under test, so validation does not change it; at
+temperature 0 runs of one configuration are often identical, and the evidence line then reports
+"one behaviour observed" instead of a failure-rate bound (`TestResult.distinct_behaviours`).
+Search budget: 240 runs per investigation. Cost figures use fixed notional prices per model
+(`PRICE_MODEL_CHEAP`, `PRICE_MODEL_FLAGSHIP`), because local inference has no bill: "cost saving
+kept" compares the configurations, not real spend.
+
 **Procedure.**
 
 - Every arm runs the same 6 cases. Nobody approves an automated-arm case they investigated by
-  hand. Each runner uses their own Flagsmith environment (`bench-1` to `bench-3`).
+  hand. Each runner uses their own Flagsmith environment (`bench-1` to `bench-3`): for a run,
+  the API's `TRUSTGATE_ENVIRONMENT_OPSPILOT` and `TRUSTGATE_ENVIRONMENT_VAULTGUARD` point at
+  that environment, and the gate allows it (`GATE_ENVIRONMENTS`, keys written by the setup
+  script). Prod environments are never touched by eval runs.
 - Clock: from the alert to a repair applied in Flagsmith with the incident replay passing.
-- Stop rules: the manual arm gives up after 30 minutes; automated arms stop at their run or
-  dollar budget. Both count as unsolved, never as excluded.
+- Stop rules: the manual arm gives up after 30 minutes; automated arms stop at their run budget
+  (240). Both count as unsolved, never as excluded.
 
 **Metrics** (lead metrics first): human active time; cost saving kept versus the release; flags
 reverted unnecessarily; interaction cases found; final fixes failing a fresh validation;
 time to first suspect (runs that blamed the right flags); time to applied fix; correct attribution; diagnostic runs;
-inference cost. Scaling test: search runs at 5, 10 and 20 changed flags, plain versus guided.
+inference cost (notional, see above) and wall-clock time of the search. Scaling test: search runs at 5, 10 and 20 changed flags, plain versus guided.
 
 **Expectations, stated before running.**
 
@@ -338,6 +352,26 @@ excluded from time medians. Six cases per arm is a small demonstration, not grou
 statistical claims. Expectations that fail are reported as failed.
 
 **Deviations.** _None yet._
+
+## Limits and known issues
+
+- **Sandbox, not production.** Replays run the real agents and models on a seeded SQLite copy
+  of each domain, graded from the database. A repair proven there is still a hypothesis about
+  production; the read-back checks what Flagsmith serves, not how the agent then behaves.
+- **Local models.** The demo runs `qwen3:14b` and `qwen3:8b` on one MacBook through Ollama, one
+  replay at a time, so a full investigation takes about 20 minutes. Faster with a hosted
+  provider (`LLM_PROVIDER=groq` or `openai`), at the price of rate limits or a bill.
+- **Temperature 0.** Runs of one configuration are often identical, so "0 failures in 20 runs"
+  can be one behaviour seen 20 times. The evidence line says so instead of quoting a
+  failure-rate bound.
+- **Multi-flag writes aren't atomic.** With v2 feature versioning the gate writes one feature
+  version per flag. A failure halfway leaves some flags changed; the read-back reports it and
+  the card offers a rollback proposal.
+- **Small benchmark.** Six eval cases per arm, all synthetic incidents on two demo agents. It
+  shows the method works end to end; it isn't a statistical result.
+- **Flagsmith free plan.** One dashboard seat, so only the organisation owner sees the
+  dashboard; the rest of the team works through the API keys. The audit log is empty on the
+  free plan, which is why the gate keeps its own.
 
 ## Development
 

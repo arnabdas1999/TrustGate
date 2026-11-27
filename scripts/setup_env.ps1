@@ -72,6 +72,14 @@ $orgKey = Read-Secret "Flagsmith ORGANISATION API key (arnab-gate)"
 $opsKey = Read-Secret "OpsPilot Prod server-side key (ser.)"
 $vgKey = Read-Secret "VaultGuard Prod server-side key (ser., Enter to skip)" $true
 
+# Benchmark environments (one per runner). Optional: Enter skips one.
+$benchIds = [ordered]@{ "bench-1" = "121201"; "bench-2" = "121202"; "bench-3" = "121203" }
+$benchKeys = [ordered]@{}
+foreach ($name in $benchIds.Keys) {
+    $k = Read-Secret "$name server-side key (ser., Enter to skip)" $true
+    if ($k) { $benchKeys[$name] = $k }
+}
+
 # LLM: ollama (local, free; the main engine), groq (free tier, backup) or gemini.
 $llmProvider = (Read-Plain "LLM provider: ollama, groq or gemini" "ollama").ToLower()
 $llmKey = ""
@@ -126,9 +134,13 @@ $envLines = @(
 if ($llmBase) { $envLines += "LLM_BASE_URL=$llmBase" }
 if ($llmKey) { $envLines += "LLM_API_KEY=$llmKey" }
 if ($vgKey) { $envLines += "FLAGSMITH_SERVER_KEY_$vgSuffix=$vgKey" }
+foreach ($name in $benchKeys.Keys) {
+    $envLines += "FLAGSMITH_SERVER_KEY_$(Get-EnvSuffix $name)=$($benchKeys[$name])"
+}
 
 $environments = "${opsEnv}:$opsEnvId"
 if ($vgKey) { $environments += ",${vgEnv}:$vgEnvId" }
+foreach ($name in $benchKeys.Keys) { $environments += ",${name}:$($benchIds[$name])" }
 $gateLines = @(
     "# Written by scripts/setup_env.ps1. Never commit this file. Only the gate reads it.",
     "FLAGSMITH_API_KEY=$orgKey",
@@ -143,6 +155,9 @@ $gateLines = @(
     "FLAGSMITH_SERVER_KEY=$opsKey"
 )
 if ($vgKey) { $gateLines += "GATE_SERVER_KEY_$vgSuffix=$vgKey" }
+foreach ($name in $benchKeys.Keys) {
+    $gateLines += "GATE_SERVER_KEY_$(Get-EnvSuffix $name)=$($benchKeys[$name])"
+}
 
 Write-EnvFile $envPath $envLines
 Write-EnvFile $gatePath $gateLines
