@@ -49,7 +49,12 @@ from orchestrator.proposals import (
 )
 from orchestrator.repo import Repo
 from orchestrator.search_port import SearchEngine, SearchOutcome, SearchUnavailable
-from orchestrator.snapshots import load_snapshot, release_diff, segments_document
+from orchestrator.snapshots import (
+    load_snapshot,
+    release_diff,
+    same_segment_rules,
+    segments_document,
+)
 from verifier.readback import FlagSource, VerifyStatus, verify
 
 log = logging.getLogger("trustgate.orchestrator")
@@ -98,13 +103,18 @@ class Orchestrator:
                  flag_source: Callable[[str], FlagSource],
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC),
                  sleep: Callable[[float], None] = time.sleep, verify_timeout_s: float = 60.0,
-                 llm: LLM | None = None, llm_model: str = ""):
+                 llm: LLM | None = None, llm_model: str = "",
+                 replay_segments: Callable[[], Mapping[str, Any] | None] | None = None):
         self.repo, self.gate, self.search = repo, gate, search
         self.configs, self.flag_source = configs, flag_source
         self.clock, self.sleep, self.verify_timeout_s = clock, sleep, verify_timeout_s
         # Optional: guided suspect ordering and the approver's explanation. Without it (or on
         # quota) the diff order and the code-written template are used.
         self.llm, self.llm_model = llm, llm_model
+        # The segment definitions the search replays against (the sandbox's copy). When set,
+        # the triaged segment's live Flagsmith rules must match them, or the search would
+        # validate a repair for a different set of identities than the write reaches.
+        self.replay_segments = replay_segments
 
     def _save(self, inv: Investigation, status: InvestigationStatus | None = None) -> None:
         if status is not None:
@@ -144,6 +154,10 @@ class Orchestrator:
         except TriageError as exc:
             log.warning("investigation %s: triage: %s", inv.id, exc)
             inv.segment = None
+        mismatch = self._segment_mismatch(inv.segment, view["view"])
+        if mismatch:
+            log.warning("investigation %s: inconclusive: %s", inv.id, mismatch)
+            return self._save(inv, InvestigationStatus.INCONCLUSIVE)
         self._save(inv, InvestigationStatus.SEARCHING)
 
         result = self.search.run(incident, inv.suspects, inv.mode)
@@ -180,6 +194,21 @@ class Orchestrator:
             inv.timestamps.proposal = self.clock()
             return self._save(inv, InvestigationStatus.PROPOSED)
         self._save(inv, InvestigationStatus.INCONCLUSIVE)
+
+    def _segment_mismatch(self, segment: str | None, view: dict[str, Any]) -> str | None:
+        """A reason when the replay's copy of the triaged segment differs from Flagsmith's."""
+        if self.replay_segments is None or not segment:
+            return None
+        replay = self.replay_segments()
+        if replay is None:
+            return None  # no sandbox copy (e.g. scripted search): nothing to compare
+        ours = replay.get(segment)
+        live = (view.get("segments") or {}).get(segment, {}).get("rules")
+        if ours is None:
+            return f"segment {segment} exists in Flagsmith but not in the sandbox"
+        if live is None or not same_segment_rules(live, ours.get("rules") or []):
+            return f"segment rules differ between Flagsmith and the sandbox ({segment})"
+        return None
 
     def reinvestigate(self, investigation_id: str) -> None:
         """After STALE: Flagsmith changed since the proposal, so start over from the snapshots."""

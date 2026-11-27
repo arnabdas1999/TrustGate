@@ -27,7 +27,7 @@ from contracts.models import Domain, Identity
 from orchestrator.gate_client import GateClient
 from orchestrator.lifecycle import DomainConfig, Orchestrator
 from orchestrator.repo import DictRepo
-from orchestrator.search_port import search_from_env
+from orchestrator.search_port import sandbox_segments, search_from_env
 from verifier.readback import EdgeFlagSource, FlagSource
 
 log = logging.getLogger("trustgate.orchestrator")
@@ -88,7 +88,9 @@ def orchestrator_for(store: Any, env: Mapping[str, str] | None = None) -> Orches
                 repo=DictRepo(store), gate=GateClient(e.get("GATE_URL", "http://localhost:8100")),
                 search=search_from_env(e), configs=configs_from_env(e),
                 flag_source=flag_source_from_env(e), llm=llm_from_env(e),
-                llm_model=e.get("MODEL_CHEAP", ""))
+                llm_model=e.get("MODEL_CHEAP", ""),
+                replay_segments=(sandbox_segments
+                                 if e.get("TRUSTGATE_SEARCH", "").strip() == "sandbox" else None))
         return _orchestrators[id(store)]
 
 

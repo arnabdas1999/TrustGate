@@ -272,6 +272,56 @@ def test_per_flag_ops_that_differ_from_what_was_validated_are_not_proposed(setup
     assert inv.status is InvestigationStatus.INCONCLUSIVE and inv.proposal_id is None
 
 
+class CountingSearch(ScriptedSearch):
+    calls = 0
+
+    def run(self, incident, suspects, mode):
+        CountingSearch.calls += 1
+        return super().run(incident, suspects, mode)
+
+
+def _with_replay_segments(setup, segments):
+    repo, gate, flagsrc, _ = setup
+    CountingSearch.calls = 0
+    return Orchestrator(repo=repo, gate=gate, search=CountingSearch(["agent_prompt_version"]),
+                        configs=CONFIG, flag_source=lambda env: flagsrc, sleep=lambda s: None,
+                        verify_timeout_s=0, replay_segments=lambda: segments)
+
+
+def test_matching_sandbox_segment_rules_let_the_investigation_run(setup):
+    from sandbox.flags import SEGMENTS  # the real sandbox copy
+    repo = setup[0]
+    _with_replay_segments(setup, SEGMENTS).run("inv_1")
+    assert repo.get_investigation("inv_1").status is InvestigationStatus.PROPOSED
+    assert CountingSearch.calls == 1
+
+
+def test_different_sandbox_segment_rules_end_inconclusive_before_any_replay(setup, caplog):
+    repo = setup[0]
+    other = [{"type": "ALL", "conditions": [], "rules": [{"type": "ANY", "rules": [],
+              "conditions": [{"operator": "EQUAL", "property_": "tier", "value": "1"}]}]}]
+    with caplog.at_level("WARNING", logger="trustgate.orchestrator"):
+        _with_replay_segments(setup, {"tier0_production": {"rules": other}}).run("inv_1")
+    inv = repo.get_investigation("inv_1")
+    assert inv.status is InvestigationStatus.INCONCLUSIVE and inv.proposal_id is None
+    assert CountingSearch.calls == 0
+    assert "segment rules differ between Flagsmith and the sandbox" in caplog.text
+
+
+def test_segment_missing_from_the_sandbox_ends_inconclusive(setup, caplog):
+    repo = setup[0]
+    with caplog.at_level("WARNING", logger="trustgate.orchestrator"):
+        _with_replay_segments(setup, {}).run("inv_1")
+    assert repo.get_investigation("inv_1").status is InvestigationStatus.INCONCLUSIVE
+    assert "not in the sandbox" in caplog.text and CountingSearch.calls == 0
+
+
+def test_no_sandbox_copy_skips_the_check(setup):
+    repo = setup[0]
+    _with_replay_segments(setup, None).run("inv_1")
+    assert repo.get_investigation("inv_1").status is InvestigationStatus.PROPOSED
+
+
 # --- verify_after_write never leaves the investigation in APPLIED (PR #1 blocker) ---------------
 
 from orchestrator.gate_client import GateBusy  # noqa: E402

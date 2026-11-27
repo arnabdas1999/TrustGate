@@ -98,3 +98,48 @@ def test_segments_document_for_triage():
     doc = segments_document(GATE_VIEW["view"])
     assert doc == {"project": {"segments": [
         {"name": "tier0_production", "rules": [{"type": "ALL", "conditions": [], "rules": []}]}]}}
+
+
+# --- segment rule comparison (Flagsmith's live rules vs the sandbox's copy) -------------------
+
+from orchestrator.snapshots import same_segment_rules  # noqa: E402
+
+
+def _any(*conds):
+    return {"type": "ANY", "rules": [], "conditions": [
+        {"operator": op, "property_": p, "value": v} for p, op, v in conds]}
+
+
+HIGH_VALUE = [{"type": "ALL", "conditions": [], "rules": [
+    _any(("amount_usd", "GREATER_THAN_INCLUSIVE", "10000"), ("new_vendor", "EQUAL", "true"))]}]
+
+
+def test_same_rules_match_whatever_the_order_and_value_types():
+    reordered = [{"type": "ALL", "conditions": [], "rules": [
+        {"type": "ANY", "rules": [], "conditions": [
+            {"property_": "new_vendor", "operator": "EQUAL", "value": True, "id": 9},
+            {"property_": "amount_usd", "operator": "GREATER_THAN_INCLUSIVE", "value": 10000}]}]}]
+    assert same_segment_rules(HIGH_VALUE, reordered)
+
+
+@pytest.mark.parametrize("live", [
+    [{"type": "ALL", "conditions": [], "rules": [  # AND instead of OR
+        {**_any(("amount_usd", "GREATER_THAN_INCLUSIVE", "10000"),
+                ("new_vendor", "EQUAL", "true")), "type": "ALL"}]}],
+    [{"type": "ALL", "conditions": [], "rules": [  # off-by-one threshold
+        _any(("amount_usd", "GREATER_THAN_INCLUSIVE", "10001"), ("new_vendor", "EQUAL", "true"))]}],
+    [{"type": "ALL", "conditions": [], "rules": [  # another operator
+        _any(("amount_usd", "GREATER_THAN", "10000"), ("new_vendor", "EQUAL", "true"))]}],
+    [{"type": "ALL", "conditions": [], "rules": [  # a condition missing
+        _any(("amount_usd", "GREATER_THAN_INCLUSIVE", "10000"))]}],
+])
+def test_different_rules_do_not_match(live):
+    assert not same_segment_rules(live, HIGH_VALUE)
+
+
+def test_sandbox_segments_match_the_flagsmith_shape_we_created():
+    from sandbox.flags import SEGMENTS
+    tier0 = [{"type": "ALL", "conditions": [], "rules": [
+        _any(("env", "EQUAL", "prod")), _any(("tier", "EQUAL", "0"))]}]
+    assert same_segment_rules(tier0, SEGMENTS["tier0_production"]["rules"])
+    assert same_segment_rules(HIGH_VALUE, SEGMENTS["high_value_wires"]["rules"])

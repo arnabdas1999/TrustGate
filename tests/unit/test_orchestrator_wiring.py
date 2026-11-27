@@ -69,3 +69,13 @@ def test_reinvestigate_in_background_calls_the_orchestrator(monkeypatch):
     monkeypatch.setattr(wiring, "orchestrator_for", lambda store: Orch())
     wiring.reinvestigate_in_background(object(), "inv_9").join(timeout=5)
     assert seen == ["inv_9"]
+
+
+def test_sandbox_search_turns_on_the_segment_rules_check():
+    from orchestrator import wiring
+    from orchestrator.search_port import sandbox_segments
+
+    stores = [object(), object()]  # kept alive: orchestrators are cached per id(store)
+    on = wiring.orchestrator_for(stores[0], {"TRUSTGATE_SEARCH": "sandbox"})
+    off = wiring.orchestrator_for(stores[1], {"TRUSTGATE_SEARCH": "scripted:agent_prompt_version"})
+    assert on.replay_segments is sandbox_segments and off.replay_segments is None

@@ -166,6 +166,16 @@ class ScriptedSearch:
                             candidates=candidates, runs_used=sum(s.runs for s in steps))
 
 
+def sandbox_segments() -> Mapping[str, dict] | None:
+    """The segment definitions the sandbox replays against (sandbox/flags.py SEGMENTS), or None
+    if sandbox/ can't be imported."""
+    try:
+        from sandbox.flags import SEGMENTS  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return None
+    return SEGMENTS
+
+
 def search_from_env(env: Mapping[str, str] | None = None) -> SearchEngine:
     """TRUSTGATE_SEARCH picks the engine:
     - sandbox: the real search (search.SandboxSearch: sandbox replays, ddmin, repair validation),
