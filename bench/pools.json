@@ -41,7 +41,19 @@
             "new": "expanded_v2"
           }
         ],
-        "verified": false
+        "verified": false,
+        "evidence": {
+          "runs": 10,
+          "failures": 0,
+          "errors": 0,
+          "baseline_failures": 0,
+          "baseline_runs": 10,
+          "models": {
+            "cheap": "qwen3:8b",
+            "flagship": "qwen3:14b"
+          },
+          "at": "2026-11-27T23:27:52Z"
+        }
       },
       {
         "id": "context_oncall_notes",
@@ -51,7 +63,19 @@
             "new": "full_history_notes"
           }
         ],
-        "verified": false
+        "verified": false,
+        "evidence": {
+          "runs": 10,
+          "failures": 0,
+          "errors": 0,
+          "baseline_failures": 0,
+          "baseline_runs": 10,
+          "models": {
+            "cheap": "qwen3:8b",
+            "flagship": "qwen3:14b"
+          },
+          "at": "2026-11-27T23:27:52Z"
+        }
       }
     ],
     "safe": [
