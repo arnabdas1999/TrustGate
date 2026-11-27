@@ -451,3 +451,17 @@ def test_sandbox_oracle_counts_distinct_behaviours(tmp_path):
     oracle = SandboxOracle(ops, incident(), parallel=2)
     obs = oracle(baseline_config(), 4, early_stop=False)
     assert obs.runs == 4 and len(obs.behaviours) == 1  # a scripted agent is deterministic
+
+
+def test_distinct_behaviours_reach_the_test_result(tmp_path):
+    from sandbox.flags import baseline_config
+    from tests.unit.sandbox_helpers import adapter as scripted
+
+    ops = scripted(tmp_path=tmp_path)
+    t = Tester(SandboxOracle(ops, incident(), parallel=2), Budget(100, 10))
+    confirm = t.test(TestPhase.CONFIRM, baseline_config(), [])
+    assert confirm.distinct_behaviours == 1  # scripted agent: every run identical
+    provisional = t.test(TestPhase.SEARCH, baseline_config(), [], record=False)
+    assert t.escalate(provisional).distinct_behaviours == 1
+    synthetic = Tester(oracle_from(lambda v, c: False), Budget(100, 10))
+    assert synthetic.test(TestPhase.CONFIRM, cfg(), []).distinct_behaviours is None

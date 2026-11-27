@@ -276,8 +276,71 @@ compose network instead (an `mcp` compose service is proposed).
 
 ## Search and testing
 
-_TODO (Khyati)._ What "1-minimal" means, the PASS / FAIL / INCONCLUSIVE outcomes, and the
-rule-of-three evidence line.
+TrustGate answers two separate questions and claims only what each method can show.
+
+| Question | Method | What we claim |
+| --- | --- | --- |
+| Which flag changes reproduce the failure? | Delta debugging (`ddmin`) over the release diff | A reproducible, **1-minimal** failure-inducing set, found within the run budget |
+| What is the smallest change that repairs the release? | Repair candidates tested narrowest first | The narrowest repair that passed fresh validation runs and the held-out cases |
+
+**Replays.** Every replay runs the real agent and model on a fresh copy of the domain's seeded
+SQLite database, with the incident's captured flags plus the overrides under test. Live
+Flagsmith is never touched during search, and the model a configuration names is never swapped
+for a cheaper one. A segment override is applied only when the identity's traits match the
+segment's rules (`sandbox/flags.py`, checked against Flagsmith by `python -m
+sandbox.check_segments`). Graders are deterministic: they read the database and the tool log,
+never an LLM, and the agent reports its status through a `report_status` tool.
+
+**1-minimal.** Removing any single change from the set makes the failure disappear, on fresh
+runs. It is not necessarily the globally smallest set or the only cause: if flag A alone and
+flags B+C together both break the agent, `ddmin` can return either, depending on suspect order.
+So TrustGate never says "the root cause". Guided mode only changes that order (the investigator
+ranks the suspects from the failing trace); plain mode keeps the diff order.
+
+**Outcomes.** Every test of a configuration is PASS, FAIL or INCONCLUSIVE, never a bare yes/no.
+
+- **FAIL:** at least one run broke a rule. The grader is deterministic, so one violation is real
+  evidence. A run that broke a rule and then errored (rate limit, timeout) still counts.
+- **PASS:** enough completed runs with no violations. In validation and after the write, every
+  run must also be a graded success: an agent that stalls breaks no rule and fixes nothing, so
+  it can't pass.
+- **INCONCLUSIVE:** not enough runs to decide (budget gone, provider errors), or clean but the
+  agent didn't do the job. A clean 0 of 3 during search is recorded as INCONCLUSIVE too: it's
+  only provisional.
+
+| Phase | Runs | Rule |
+| --- | --- | --- |
+| Reproduce | 10 on release, 10 on baseline | The release must fail at least once and the baseline never, or the investigation is NOT_REPRODUCIBLE |
+| Search | 3 per subset, stop on the first violation | Any violation is FAIL; 0 of 3 is provisional |
+| Confirm | Fresh 10 on the set and on each set minus one | The set fails; each smaller set shows 0 of 10. A failing smaller set restarts the search on it |
+| Validate a repair | 20 incident replays, plus each held-out case 3 times | 0 violations and every run a success; held-out passes within 1 run of baseline, and the baseline must pass held-out itself (80% or more) |
+
+**Repairs, narrowest first.** A segment override (culprit flags back to baseline for the
+incident's segment only), then a surgical revert (culprit flags back for everyone), then a global
+rollback. For a two-flag culprit, each flag is tried on its own before the pair. Validation stops
+at the first option that passes; the wider ones are listed unvalidated so the card can show them.
+"Cost saving kept" is `(baseline cost − option cost) / (baseline cost − release cost)`, from
+measured tokens per run. Example: VaultGuard's segment rule only sees a single wire's amount, so
+a split payment to the same vendor slips past it. TrustGate sees the held-out case regress, won't
+scope the fix to the segment, and proposes reverting one flag instead.
+
+**The evidence line.** With independent runs, 0 failures in n runs means that, with 95%
+confidence, the failure rate is below about 3/n (the rule of three): "0 failures in 20 runs. With
+95% confidence the failure rate is below about 15%." At temperature 0 the runs of one
+configuration are often identical, and then 20 runs are one observation repeated. Search counts
+the distinct behaviours (tool calls with arguments, plus the reported status;
+`TestResult.distinct_behaviours`). When there is only one, the card says "0 failures in 20 runs,
+all identical (the agent runs at temperature 0), so this is one behaviour observed, not a
+failure-rate estimate". These are practical hackathon thresholds, not proof of production
+safety.
+
+**Budget.** One investigation is capped at 240 replays (a two-flag culprit's per-flag options
+need more than the plan's 160). A batch is priced at the measured cost per run before it starts.
+Budget gone means INCONCLUSIVE, never PASS.
+
+**Scaling.** `python -m search.scaling` measures search runs for releases of 5, 10 and 20 changes
+(the 5 real ones plus harmless flags the agents read), in plain or guided order. Trying every
+combination would take 2^N configurations × 3 runs: 96, 3,072 and 3,145,728.
 
 ## Benchmark
 

@@ -84,6 +84,14 @@ class Tester:
     last: Observation | None = None  # the observation behind the latest test()
     _spent_runs: int = 0
     _spent_usd: float = 0.0
+    # behaviours seen per recorded result (by its trace ids), so escalate() can merge them
+    _behaviours: dict[tuple[str, ...], set[str]] = field(default_factory=dict)
+
+    def _distinct(self, trace_ids: Sequence[str], behaviours: set[str], runs: int) -> int | None:
+        if not behaviours:
+            return None  # the oracle doesn't report behaviours (synthetic tests)
+        self._behaviours[tuple(trace_ids)] = set(behaviours)
+        return min(len(behaviours), runs)
 
     @property
     def cost_per_run(self) -> float:
@@ -136,7 +144,9 @@ class Tester:
             else:  # too few runs, or clean but the agent didn't do the right thing
                 outcome = TestOutcome.INCONCLUSIVE
             result = TestResult(phase=phase, config=config, changes=list(changes), runs=obs.runs,
-                                failures=obs.failures, outcome=outcome, trace_ids=obs.trace_ids)
+                                failures=obs.failures, outcome=outcome, trace_ids=obs.trace_ids,
+                                distinct_behaviours=self._distinct(obs.trace_ids, obs.behaviours,
+                                                                   obs.runs))
         if record:
             self.steps.append(result)
         return result
@@ -161,8 +171,12 @@ class Tester:
             outcome = TestOutcome.INCONCLUSIVE
         else:
             outcome = TestOutcome.FAIL if failures else TestOutcome.PASS
+        seen = self._behaviours.get(tuple(provisional.trace_ids), set()) | \
+            self._behaviours.get(tuple(more.trace_ids), set())
+        trace_ids = provisional.trace_ids + more.trace_ids
         result = TestResult(phase=TestPhase.ESCALATE, config=provisional.config,
                             changes=provisional.changes, runs=runs, failures=failures,
-                            outcome=outcome, trace_ids=provisional.trace_ids + more.trace_ids)
+                            outcome=outcome, trace_ids=trace_ids,
+                            distinct_behaviours=self._distinct(trace_ids, seen, runs))
         self.steps.append(result)
         return result
