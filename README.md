@@ -7,7 +7,22 @@ for your approval before changing a single production flag.**
 Built for [Toggle Wars](https://www.wemakedevs.org/hackathons/flagsmith), Track 2: AI Agents and
 Feature Flags.
 
-> Demo video: _coming Saturday_ · Status: in development
+> Demo video: _link added after recording (Saturday)_ · Status: feature-complete; benchmark
+> running
+
+![The TrustGate arena: sandbox pods glowing red and green, the OpsPilot robot holding the culprit
+flag, the Gatekeeper beside the amber gate to Flagsmith Prod, and the approval panel with the exact
+change](docs/images/arena.png)
+
+## The interface
+
+An investigation is a live 3D stage, drawn from the real investigation data. Each glass pod is one
+sandbox replay of a flag combination, glowing green or red by result. The agent robot holds the
+culprit flag. The Gatekeeper stands at a gate to Flagsmith Prod that stays shut until a human
+approves the exact change, shown as a diff. On approval the gate opens, the fix flies through,
+and the Prod robot turns green once the read-back confirms what Flagsmith serves. The evidence
+drawer holds the full search, every repair tested, the exact Flagsmith call and the gate's audit
+trail. Built with React Three Fiber, with characters modelled in code (no downloaded assets).
 
 ## How it works
 
