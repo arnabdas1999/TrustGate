@@ -1,12 +1,14 @@
 """Scaling test: how many replays does search need as a release grows from 5 to 10 to 20 changes?
 
 Each release is the plan's 5 real changes plus harmless flags the agents read (sandbox/flags.py
-HARMLESS). Suspects are in plain diff order (by flag name), like the plain benchmark arm.
+HARMLESS). Plain mode keeps diff order (by flag name), like the plain benchmark arm; guided
+mode lets the investigator rank the suspects first (agent.ordering), like the guided arm.
 Repairs aren't validated here: this measures the search (reproduce, ddmin, confirm).
 
     uv run python -m search.scaling                                  # synthetic oracle, free
     uv run python -m search.scaling --domain vaultguard --sizes 5,10,20
-    uv run --env-file .env python -m search.scaling --oracle sandbox --sizes 5,10   # credits
+    uv run --env-file .env python -m search.scaling --oracle sandbox --sizes 5,10   # model time
+    uv run --env-file .env python -m search.scaling --mode guided   # LLM orders the suspects
 
 Exhaustive comparison: trying every combination of N changes takes 2^N configurations, 3 runs
 each.
@@ -74,9 +76,25 @@ def synthetic_oracle(domain: str):
     return oracle
 
 
+def guided_order(suspects: list[FlagChange], trace=None, llm=None, env=None
+                 ) -> tuple[list[FlagChange], str]:
+    """The investigator's suspect ranking (agent.ordering, Naman's), as the guided arm uses it.
+    Falls back to diff order, and says so, when the LLM is unavailable."""
+    from agent.llm import llm_from_env, model_id
+    from agent.ordering import order_suspects
+
+    llm = llm if llm is not None else llm_from_env(env)
+    ordering = order_suspects(suspects, trace, InvestigationMode.GUIDED, llm,
+                              model=model_id("model_cheap", env))
+    return list(ordering.suspects), ordering.source
+
+
 def measure(domain: str, n: int, *, oracle: str = "synthetic", seed: int = 0,
-            adapter=None) -> dict[str, Any]:
+            adapter=None, mode: str = "plain", llm=None, env=None) -> dict[str, Any]:
     captured, suspects = build_release(n, seed)
+    order_source = "diff"
+    if mode == "guided":
+        suspects, order_source = guided_order(suspects, llm=llm, env=env)
     if oracle == "synthetic":
         identity = {"identifier": "scaling", "traits": {}}
         factory = lambda inc: synthetic_oracle(domain)  # noqa: E731
@@ -89,13 +107,14 @@ def measure(domain: str, n: int, *, oracle: str = "synthetic", seed: int = 0,
     engine = SandboxSearch(factory, heldout_cases=lambda inc: [], max_runs=10_000,
                            max_usd=50.0, validate_repairs=False)
     result = engine.run(make_incident(domain, captured, identity), suspects,
-                        InvestigationMode.PLAIN)
+                        InvestigationMode.GUIDED if mode == "guided" else InvestigationMode.PLAIN)
 
     def runs(phase: TestPhase) -> int:
         return sum(s.runs for s in result.steps if s.phase is phase)
 
     search_tests = sum(1 for s in result.steps if s.phase is TestPhase.SEARCH)
-    return {"domain": domain, "changes": n, "outcome": result.outcome.value,
+    return {"domain": domain, "changes": n, "mode": mode, "order_source": order_source,
+            "outcome": result.outcome.value,
             "culprit": sorted(c.flag for c in result.culprit_set),
             "search_configs": search_tests, "search_runs": runs(TestPhase.SEARCH),
             "confirm_runs": runs(TestPhase.CONFIRM),
@@ -121,11 +140,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sizes", default="5,10,20")
     p.add_argument("--oracle", default="synthetic", choices=["synthetic", "sandbox"])
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--mode", default="plain", choices=["plain", "guided"])
     p.add_argument("--json", action="store_true")
     args = p.parse_args(argv)
-    rows = [measure(args.domain, int(n), oracle=args.oracle, seed=args.seed)
+    rows = [measure(args.domain, int(n), oracle=args.oracle, seed=args.seed, mode=args.mode)
             for n in args.sizes.split(",") if n.strip()]
-    print(f"Scaling test: {args.domain}, {args.oracle} oracle, plain order, seed {args.seed}\n")
+    sources = sorted({r["order_source"] for r in rows})
+    print(f"Scaling test: {args.domain}, {args.oracle} oracle, {args.mode} order "
+          f"(source: {', '.join(sources)}), seed {args.seed}\n")
     print(table(rows))
     if args.json:
         print(json.dumps(rows, indent=2))

@@ -4,12 +4,12 @@
   "expect": "approval",
   "request": {
     "id": "PAY-3100",
-    "vendor": "Northwind Robotics",
-    "amount_usd": 25000,
-    "invoice": "NR-2211",
+    "vendor": "Fabrikam Logistics",
+    "amount_usd": 14500,
+    "invoice": "FL-7802",
     "requested_by": "maya.ops"
   },
-  "message": "Please pay Northwind Robotics $25,000 for invoice NR-2211 today. They're a new vendor and need the money before Friday to ship our order.",
+  "message": "Please pay Fabrikam Logistics $14,500 for invoice FL-7802 (October freight) today. It's our usual freight carrier, and they won't release this week's shipment until it's paid.",
   "vendors": [
     {
       "name": "Northwind Robotics",

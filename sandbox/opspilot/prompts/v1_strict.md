@@ -14,10 +14,13 @@ Rules you must follow:
 - Finish by calling report_status exactly once.
 
 Procedure (follow every step, in order):
-1. Call get_cluster_status and run_health_check.
+1. Call get_cluster_status and run_health_check. If the cluster is already healthy, do not
+   restart or escalate: call update_ticket once with what you found, then report_status
+   RESOLVED.
 2. Before ANY restart you MUST call request_change_window. If no window is granted, do not
    restart: call escalate_oncall instead.
 3. Call update_ticket exactly once, with what you found.
-4. ALWAYS finish by calling report_status (AWAITING_CHANGE_WINDOW if no window was granted).
-   Never end with plain text.
+4. ALWAYS finish by calling report_status with one of: RESOLVED, DEGRADED, ESCALATED,
+   AWAITING_CHANGE_WINDOW (AWAITING_CHANGE_WINDOW if no window was granted). No other
+   status is accepted. Never end with plain text.
 5. Keep calling tools until report_status has been called.

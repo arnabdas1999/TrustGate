@@ -451,3 +451,83 @@ def test_sandbox_oracle_counts_distinct_behaviours(tmp_path):
     oracle = SandboxOracle(ops, incident(), parallel=2)
     obs = oracle(baseline_config(), 4, early_stop=False)
     assert obs.runs == 4 and len(obs.behaviours) == 1  # a scripted agent is deterministic
+
+
+def test_distinct_behaviours_reach_the_test_result(tmp_path):
+    from sandbox.flags import baseline_config
+    from tests.unit.sandbox_helpers import adapter as scripted
+
+    ops = scripted(tmp_path=tmp_path)
+    t = Tester(SandboxOracle(ops, incident(), parallel=2), Budget(100, 10))
+    confirm = t.test(TestPhase.CONFIRM, baseline_config(), [])
+    assert confirm.distinct_behaviours == 1  # scripted agent: every run identical
+    provisional = t.test(TestPhase.SEARCH, baseline_config(), [], record=False)
+    assert t.escalate(provisional).distinct_behaviours == 1
+    synthetic = Tester(oracle_from(lambda v, c: False), Budget(100, 10))
+    assert synthetic.test(TestPhase.CONFIRM, cfg(), []).distinct_behaviours is None
+
+
+# -- adaptive stop (Naman, board #170) -----------------------------------------------------------
+
+
+def oracle_with_behaviours(fails, behaviour_of_run):
+    """behaviour_of_run(i) -> signature for the i-th run overall."""
+    state = {"i": 0}
+
+    def oracle(config, n, *, early_stop, case_id=None):
+        runs = failures = 0
+        seen = set()
+        for _ in range(n):
+            seen.add(behaviour_of_run(state["i"]))
+            state["i"] += 1
+            runs += 1
+            if fails(config.values):
+                failures += 1
+                if early_stop:
+                    break
+        return Observation(runs=runs, failures=failures, passes=runs - failures, behaviours=seen)
+    return oracle
+
+
+def test_adaptive_stops_after_three_identical_runs():
+    t = Tester(oracle_with_behaviours(lambda v: False, lambda i: "same"), Budget(100, 10),
+               adaptive=True)
+    r = t.test(TestPhase.VALIDATE, cfg(), [])
+    assert r.outcome is P and r.runs == 3 and r.distinct_behaviours == 1
+    assert "all identical" in evidence_line(r.failures, r.runs, r.distinct_behaviours)
+    rep = t.test(TestPhase.REPRODUCE, cfg(x=1), [])
+    assert rep.runs == 3 and t.budget.runs == 6
+
+
+def test_adaptive_tops_up_when_runs_differ():
+    t = Tester(oracle_with_behaviours(lambda v: False, lambda i: f"b{i % 2}"), Budget(100, 10),
+               adaptive=True)
+    r = t.test(TestPhase.CONFIRM, cfg(), [])
+    assert r.outcome is P and r.runs == 10 and r.distinct_behaviours == 2
+
+
+def test_adaptive_failures_and_search_unchanged():
+    t = Tester(oracle_with_behaviours(lambda v: True, lambda i: "same"), Budget(100, 10),
+               adaptive=True)
+    assert t.test(TestPhase.REPRODUCE, cfg(), []).outcome is F
+    assert t.test(TestPhase.SEARCH, cfg(), []).runs == 1  # search keeps early stop, 3 max
+    off = Tester(oracle_with_behaviours(lambda v: False, lambda i: "same"), Budget(100, 10))
+    assert off.test(TestPhase.VALIDATE, cfg(), []).runs == 20  # off by default
+
+
+def test_adaptive_engine_uses_far_fewer_runs(tmp_path, monkeypatch):
+    from tests.unit.sandbox_helpers import adapter as scripted
+
+    ops = scripted(tmp_path=tmp_path)
+    def engine(adaptive):
+        return SandboxSearch(lambda i: SandboxOracle(ops, i, parallel=4),
+                             heldout_cases=lambda i: ops.case_ids("heldout")[:2],
+                             adaptive=adaptive)
+    full = engine(False).run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+    fast = engine(True).run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+    assert [c.flag for c in fast.culprit_set] == [c.flag for c in full.culprit_set] \
+        == ["agent_prompt_version"]
+    assert choose_candidate(fast.candidates).kind is choose_candidate(full.candidates).kind
+    assert fast.runs_used < full.runs_used * 0.6
+    monkeypatch.setenv("SEARCH_ADAPTIVE", "1")
+    assert SandboxSearch().adaptive is True

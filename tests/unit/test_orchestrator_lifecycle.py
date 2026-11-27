@@ -512,3 +512,68 @@ def test_injected_instructions_cannot_change_the_write(setup):
     # The LLM's words only ever land in the display text.
     assert "model_flagship" in got.explanation
     assert INJECTION.split()[1] in evil.prompts[0]  # it saw the trace, as data
+
+
+# --- evidence line: distinct behaviours, honest wording at temperature 0 ----------------------
+
+import sys  # noqa: E402
+
+from contracts.models import (  # noqa: E402
+    RepairCandidate,
+    TestOutcome,
+    TestPhase,
+    TestResult,
+)
+from orchestrator.lifecycle import _evidence, _fallback_evidence_line  # noqa: E402
+
+
+def _validated(failures=0, runs=20, distinct=None):
+    v = TestResult(phase=TestPhase.VALIDATE, runs=runs, failures=failures,
+                   outcome=TestOutcome.FAIL if failures else TestOutcome.PASS,
+                   config=FlagConfig(values={}, source=ConfigSource.OVERRIDE),
+                   distinct_behaviours=distinct)
+    return RepairCandidate(kind=RepairKind.SEGMENT_OVERRIDE, ops=[], validation=v)
+
+
+def test_identical_runs_are_one_behaviour_not_a_rule_of_three():
+    line = _evidence(_validated(distinct=1))
+    assert "all identical (the agent runs at temperature 0)" in line
+    assert "one behaviour observed" in line and "95% confidence" not in line
+
+
+def test_varied_runs_quote_the_rule_of_three_with_the_count():
+    line = _evidence(_validated(distinct=4))
+    assert line.startswith("0 failures in 20 runs. With 95% confidence")
+    assert "about 15%" in line and "(4 distinct behaviours)" in line
+    assert "95% confidence" in _evidence(_validated(distinct=None))  # not counted
+
+
+def test_uses_search_evidence_line_when_search_is_importable():
+    from search.testing import evidence_line
+    for args in [(0, 20, 1), (0, 20, 3), (0, 20, None), (2, 20, 1), (0, 1, 1)]:
+        cand = _validated(*args)
+        assert _evidence(cand) == evidence_line(*args)
+
+
+def test_falls_back_to_the_same_wording_without_search(monkeypatch):
+    from search.testing import evidence_line  # the reference wording, imported first
+    monkeypatch.setitem(sys.modules, "search.testing", None)  # `from search.testing` now fails
+    for args in [(0, 20, 1), (0, 20, 3), (0, 20, None), (2, 20, 1), (0, 1, 1)]:
+        assert _evidence(_validated(*args)) == _fallback_evidence_line(*args) \
+            == evidence_line(*args)
+
+
+def test_proposal_explanation_carries_the_honest_wording(setup):
+    repo, _, _, make = setup
+
+    class IdenticalRuns(ScriptedSearch):
+        def run(self, incident, suspects, mode):
+            result = super().run(incident, suspects, mode)
+            cands = [c.model_copy(update={"validation": c.validation.model_copy(
+                update={"distinct_behaviours": 1})}) for c in result.candidates]
+            return result.model_copy(update={"candidates": cands})
+
+    make(IdenticalRuns(["agent_prompt_version"])).run("inv_1")
+    proposal = repo.get_proposal(repo.get_investigation("inv_1").proposal_id)
+    assert "all identical (the agent runs at temperature 0)" in proposal.explanation
+    assert "95% confidence" not in proposal.explanation

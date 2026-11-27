@@ -31,6 +31,15 @@ RUNS = {TestPhase.REPRODUCE: 10, TestPhase.SEARCH: 3, TestPhase.ESCALATE: 7,
 EARLY_STOP = {TestPhase.SEARCH, TestPhase.ESCALATE, TestPhase.VALIDATE}
 MAX_TOPUPS = 2
 
+# Adaptive stop (opt-in, SEARCH_ADAPTIVE=1). At temperature 0 every run of a configuration is
+# often identical, so 10 or 20 fresh runs are one observation repeated. In these phases, run
+# PROBE_RUNS first; if they all behaved identically, stop there and report one behaviour
+# observed (the evidence line says so). If they differ, top up to the phase's full count.
+# Runs stay fresh; nothing is read from the display cache.
+ADAPTIVE_PHASES = {TestPhase.REPRODUCE, TestPhase.CONFIRM, TestPhase.VALIDATE,
+                   TestPhase.POST_WRITE}
+PROBE_RUNS = 3
+
 
 @dataclass
 class Observation:
@@ -73,17 +82,34 @@ def evidence_line(failures: int, runs: int, distinct: int | None = None) -> str:
     return line
 
 
+def _merge(a: Observation, b: Observation) -> Observation:
+    passes = None if a.passes is None or b.passes is None else a.passes + b.passes
+    return Observation(runs=a.runs + b.runs, failures=a.failures + b.failures,
+                       errors=a.errors + b.errors, passes=passes,
+                       cost_usd=a.cost_usd + b.cost_usd, trace_ids=a.trace_ids + b.trace_ids,
+                       behaviours=a.behaviours | b.behaviours)
+
+
 @dataclass
 class Tester:
     __test__ = False  # not a pytest test class
 
     oracle: Oracle
     budget: Budget
+    adaptive: bool = False
     steps: list[TestResult] = field(default_factory=list)
     usd: float = 0.0
     last: Observation | None = None  # the observation behind the latest test()
     _spent_runs: int = 0
     _spent_usd: float = 0.0
+    # behaviours seen per recorded result (by its trace ids), so escalate() can merge them
+    _behaviours: dict[tuple[str, ...], set[str]] = field(default_factory=dict)
+
+    def _distinct(self, trace_ids: Sequence[str], behaviours: set[str], runs: int) -> int | None:
+        if not behaviours:
+            return None  # the oracle doesn't report behaviours (synthetic tests)
+        self._behaviours[tuple(trace_ids)] = set(behaviours)
+        return min(len(behaviours), runs)
 
     @property
     def cost_per_run(self) -> float:
@@ -121,7 +147,18 @@ class Tester:
     def test(self, phase: TestPhase, config: FlagConfig, changes: Sequence[FlagChange], *,
              n: int | None = None, record: bool = True) -> TestResult:
         n = n or RUNS[phase]
-        obs = self.observe(config, n, early_stop=phase in EARLY_STOP)
+        early = phase in EARLY_STOP
+        if self.adaptive and phase in ADAPTIVE_PHASES and n > PROBE_RUNS:
+            obs = self.observe(config, PROBE_RUNS, early_stop=early)
+            identical = obs is not None and len(obs.behaviours) == 1 \
+                and obs.runs >= PROBE_RUNS
+            if obs is not None and not identical and not (early and obs.failures):
+                more = self.observe(config, n - obs.runs, early_stop=early)
+                obs = _merge(obs, more) if more is not None else (obs if obs.failures else None)
+            elif identical:
+                n = obs.runs  # one behaviour, observed PROBE_RUNS times: that's the answer
+        else:
+            obs = self.observe(config, n, early_stop=early)
         self.last = obs
         if obs is None:
             result = TestResult(phase=phase, config=config, changes=list(changes), runs=0,
@@ -136,7 +173,9 @@ class Tester:
             else:  # too few runs, or clean but the agent didn't do the right thing
                 outcome = TestOutcome.INCONCLUSIVE
             result = TestResult(phase=phase, config=config, changes=list(changes), runs=obs.runs,
-                                failures=obs.failures, outcome=outcome, trace_ids=obs.trace_ids)
+                                failures=obs.failures, outcome=outcome, trace_ids=obs.trace_ids,
+                                distinct_behaviours=self._distinct(obs.trace_ids, obs.behaviours,
+                                                                   obs.runs))
         if record:
             self.steps.append(result)
         return result
@@ -161,8 +200,12 @@ class Tester:
             outcome = TestOutcome.INCONCLUSIVE
         else:
             outcome = TestOutcome.FAIL if failures else TestOutcome.PASS
+        seen = self._behaviours.get(tuple(provisional.trace_ids), set()) | \
+            self._behaviours.get(tuple(more.trace_ids), set())
+        trace_ids = provisional.trace_ids + more.trace_ids
         result = TestResult(phase=TestPhase.ESCALATE, config=provisional.config,
                             changes=provisional.changes, runs=runs, failures=failures,
-                            outcome=outcome, trace_ids=provisional.trace_ids + more.trace_ids)
+                            outcome=outcome, trace_ids=trace_ids,
+                            distinct_behaviours=self._distinct(trace_ids, seen, runs))
         self.steps.append(result)
         return result
