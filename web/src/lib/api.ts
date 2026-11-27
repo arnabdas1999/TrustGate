@@ -40,6 +40,7 @@ async function request<T>(path: string, init: RequestInit = {}, token?: string):
 }
 
 export const api = {
+  health: () => request<{ status: string; mock: boolean }>("/api/health"),
   investigations: () => request<Investigation[]>("/api/investigations"),
   investigation: (id: string) => request<InvestigationView>(`/api/investigations/${id}`),
   audit: () => request<AuditEntry[]>("/api/audit"),

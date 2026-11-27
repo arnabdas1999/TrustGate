@@ -7,10 +7,10 @@ import type { Group, Mesh } from "three";
 export type Mood = "idle" | "search" | "alert" | "happy" | "sad";
 
 const WHITE = "#f1f2f7";
-const VISOR = "#0b0d1c";
+const VISOR = "#0d1426";
 
 const MOOD_LIGHT: Record<Mood, string> = {
-  idle: "#a5d8ff",
+  idle: "#7dd3fc",
   search: "#7dd3fc",
   alert: "#fbbf24",
   happy: "#4ade80",
@@ -135,8 +135,8 @@ export function Robot({
           </mesh>
           <group ref={eyes} position={[0, 0.03, 0.385]}>
             {[-0.1, 0.1].map((x) => (
-              <mesh key={x} position={[x, 0, 0]}>
-                <capsuleGeometry args={[0.038, 0.07, 6, 12]} />
+              <mesh key={x} position={[x, 0, 0]} scale={[1, 1.3, 0.45]}>
+                <sphereGeometry args={[0.058, 20, 20]} />
                 <meshStandardMaterial color={light} emissive={light} emissiveIntensity={2.2} toneMapped={false} />
               </mesh>
             ))}

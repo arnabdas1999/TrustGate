@@ -6,7 +6,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { formatValue, percent } from "@/lib/format";
-import { useActiveTime, usePolling, useReducedMotion } from "@/lib/hooks";
+import { useActiveTime, useDemoMode, usePolling, useReducedMotion } from "@/lib/hooks";
 import type { Investigation, InvestigationView, Proposal, TestResult } from "@/lib/types";
 import type { GateState, PodStep } from "./arena/Arena";
 import type { Mood } from "./arena/Robot";
@@ -109,6 +109,7 @@ function Hud({ view, refresh }: { view: InvestigationView; refresh: () => void }
   const { investigation: inv, proposal, calls, rollback_of, active_ms } = view;
   const { data: audit } = usePolling(api.audit, 2000);
   const reduced = useReducedMotion();
+  const demo = useDemoMode();
   const [selected, setSelected] = useState<number | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [approvedFor, setApprovedFor] = useState<string | null>(null);
@@ -160,6 +161,7 @@ function Hud({ view, refresh }: { view: InvestigationView; refresh: () => void }
           <span className="hud-id num">{inv.id}</span>
         </div>
         <StatusBadge status={inv.status} />
+        {demo && <span className="demo-chip">Demo data</span>}
         <div className="hud-runs" title={`${inv.runs_used} of ${inv.budget_runs} runs used`}>
           <span className="num">
             {inv.runs_used}/{inv.budget_runs} runs

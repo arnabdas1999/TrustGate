@@ -156,3 +156,9 @@ function subscribeClock(onChange: () => void) {
 export function useNow(): number {
   return useSyncExternalStore(subscribeClock, () => Math.floor(Date.now() / 1000) * 1000, () => 0);
 }
+
+/** True when the API serves fixture data (MOCK=1): every number on screen is demo data then. */
+export function useDemoMode(): boolean {
+  const { data } = usePolling(api.health, 30000);
+  return data?.mock === true;
+}

@@ -286,6 +286,18 @@ function Stage({ team, gate, motion, anchors }: { team: string; gate: GateState;
   );
 }
 
+/** Narrow screens see a wider slice: the camera pulls back as the aspect ratio drops. */
+function CameraRig() {
+  useFrame(({ camera, size }) => {
+    const aspect = size.width / Math.max(1, size.height);
+    const dist = aspect >= 1.45 ? 13.2 : aspect >= 1.1 ? 16 : aspect >= 0.8 ? 20 : 25;
+    camera.position.z += (dist - camera.position.z) * 0.2;
+    camera.position.y = 4.6 * (dist / 13.2) * 0.85 + 0.7;
+    camera.lookAt(0.3, -0.2, -1.2);
+  });
+  return null;
+}
+
 function Scene(props: ArenaProps & { anchors: AnchorMap; hovered: number | null; onHover: (i: number | null) => void }) {
   const { steps, mood, gate, culprit, team, motion, selected, onSelect, anchors, hovered, onHover } = props;
   const robot = useRef<Group>(null);
@@ -303,8 +315,9 @@ function Scene(props: ArenaProps & { anchors: AnchorMap; hovered: number | null;
 
   return (
     <>
+      <CameraRig />
       <color attach="background" args={["#0e1a2d"]} />
-      <fog attach="fog" args={["#0e1a2d", 14, 30]} />
+      <fog attach="fog" args={["#0e1a2d", 16, 44]} />
       <ambientLight intensity={0.55} />
       <hemisphereLight args={["#d6e8ff", "#0b1424", 0.7]} />
       <directionalLight
@@ -352,7 +365,7 @@ function Scene(props: ArenaProps & { anchors: AnchorMap; hovered: number | null;
             <Robot team={team} mood={mood} scale={1.15} motion={motion} />
           </group>
           {culprit && <Token from={ROBOT_HOME} gate={gate} motion={motion} anchors={anchors} />}
-          {gate !== "none" && <Gate state={gate} motion={motion} />}
+          <Gate state={gate} motion={motion} />
           <group position={[GATE_POS.x - 1.75, 0, GATE_POS.z + 1.25]} rotation={[0, -0.35, 0]}>
             <Robot team="#3b82f6" mood={keeperMood} scale={1.3} motion={motion} shield seed={3} />
           </group>

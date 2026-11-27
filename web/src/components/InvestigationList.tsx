@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { STATUS_LABEL, formatClock } from "@/lib/format";
-import { usePolling, useReducedMotion } from "@/lib/hooks";
+import { useDemoMode, usePolling, useReducedMotion } from "@/lib/hooks";
 import type { Investigation } from "@/lib/types";
 import type { HangarItem } from "./arena/Hangar";
 import type { Mood } from "./arena/Robot";
@@ -38,6 +38,7 @@ export function InvestigationList() {
   const { data, error } = usePolling(api.investigations, 2000);
   const router = useRouter();
   const reduced = useReducedMotion();
+  const demo = useDemoMode();
 
   const items: HangarItem[] = (data ?? []).slice(0, 4).map((inv) => ({
     id: inv.id,
@@ -60,6 +61,7 @@ export function InvestigationList() {
             TrustGate
           </Link>
           <span className="chip">Approval-gated repairs for Flagsmith-controlled AI agents</span>
+          {demo && <span className="demo-chip">Demo data</span>}
         </nav>
         <div className="hangar-copy">
           <h1>When an AI agent breaks after a flag release</h1>

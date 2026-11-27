@@ -1394,3 +1394,33 @@ tr.chosen td {
   transition: opacity 180ms ease;
   will-change: transform;
 }
+
+@media (max-width: 640px) {
+  .hud-top {
+    gap: 8px;
+    padding: 6px;
+  }
+
+  .hud-top .pill {
+    display: none;
+  }
+
+  .hud-btn {
+    margin-left: auto;
+    padding: 0 12px;
+  }
+}
+
+/* Every number on screen is fixture data while the API runs with MOCK=1. */
+.demo-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px dashed rgba(251, 191, 36, 0.55);
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
