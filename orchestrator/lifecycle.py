@@ -79,12 +79,36 @@ class DomainConfig:
     control_identity: Identity  # outside the repair's segment, for read-back
 
 
+def _fallback_evidence_line(failures: int, runs: int, distinct: int | None = None) -> str:
+    """Same wording as search.testing.evidence_line, for when search/ isn't importable."""
+    if failures:
+        return f"{failures} failures in {runs} runs"
+    if distinct == 1 and runs > 1:
+        return (f"0 failures in {runs} runs, all identical (the agent runs at temperature 0), "
+                "so this is one behaviour observed, not a failure-rate estimate")
+    line = (f"0 failures in {runs} runs. With 95% confidence the failure rate is below "
+            f"about {3.0 / runs:.0%}")
+    if distinct is not None:
+        line += f" ({distinct} distinct behaviours)"
+    return line
+
+
+def _evidence_line() -> Callable[[int, int, int | None], str]:
+    """search.testing.evidence_line when search/ is importable (lazily, like search_port)."""
+    try:
+        from search.testing import evidence_line  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 (search/ missing or broken: use the same wording here)
+        return _fallback_evidence_line
+    return evidence_line
+
+
 def _evidence(candidate: RepairCandidate) -> str:
+    """The rule of three only when the runs differed: identical runs at temperature 0 are one
+    behaviour observed, not a failure-rate estimate."""
     v = candidate.validation
     if v is None or not v.runs:
         return "no validation runs"
-    return (f"{v.failures} failures in {v.runs} runs; with 95% confidence the failure rate is "
-            f"below about {3 / v.runs:.0%} (rule of three)")
+    return _evidence_line()(v.failures, v.runs, v.distinct_behaviours)
 
 
 def _explain(inv: Investigation, cand: RepairCandidate) -> str:
