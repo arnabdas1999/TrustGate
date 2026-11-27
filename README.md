@@ -412,10 +412,16 @@ verification (`bench/pools.json`): OpsPilot `prompt_v2_fast` (one flag) and Vaul
 are recorded as unverified and not used. So the culprit is the same in all three cases of a
 domain; the cases differ in which safe changes surround it and in their order. The mix is
 therefore 3 single-flag cases and 3 interaction cases, not the 1 to 2 interactions first
-planned. Consequences: anyone who reads `bench/pools.json` can name the culprit, so the
-manual-arm runner does not open it (or any earlier case's result) before finishing their cases,
-and the automated arms never read it. Across a domain's three cases the automated arms gain
-no memory: every investigation starts from the release alone.
+planned.
+
+**The manual arm is not blind.** Anyone who has read `bench/pools.json` can name each domain's
+culprit, and all three teammates have (we built and verified the pools). We had no outside
+person to run the manual arm, so teammates run it anyway, each on cases they did not
+investigate with TrustGate. The manual runner knows the culprit going in, so manual times
+measure locating, fixing and confirming a known suspect: a lower bound on a real on-call
+engineer's time, which favours the manual arm. The automated arms never read
+`bench/pools.json` and keep nothing between cases: every investigation starts from the release
+alone.
 
 **Models and settings.** The agents and the investigator run on local models through Ollama:
 `model_flagship` = `qwen3:14b`, `model_cheap` = `qwen3:8b`, `think=false`, one replay at a time
