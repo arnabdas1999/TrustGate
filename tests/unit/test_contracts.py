@@ -89,6 +89,19 @@ def test_inconclusive_allows_zero_failures():
     assert result.outcome == TestOutcome.INCONCLUSIVE
 
 
+def test_distinct_behaviours_is_optional_and_bounded_by_runs():
+    def result(distinct):
+        return TestResult(phase=TestPhase.VALIDATE, config=_config(), runs=20, failures=0,
+                          outcome=TestOutcome.PASS, distinct_behaviours=distinct)
+
+    assert TestResult(phase=TestPhase.VALIDATE, config=_config(), runs=20, failures=0,
+                      outcome=TestOutcome.PASS).distinct_behaviours is None
+    assert result(1).distinct_behaviours == 1 and result(20).distinct_behaviours == 20
+    for bad in (-1, 21):
+        with pytest.raises(ValidationError):
+            result(bad)
+
+
 def test_segment_override_needs_a_segment():
     with pytest.raises(ValidationError):
         WriteOp(tool="create_segment_override", project="p", environment="e",

@@ -149,7 +149,7 @@ With `MOCK=1` the gate isn't needed. With real Flagsmith keys, run it too (third
 ### Real mode with Ollama (the end-to-end setup)
 
 1. Install [Ollama](https://ollama.com) and pull the two models: `ollama pull qwen3:14b` and
-   `ollama pull llama3.2:3b` (about 11 GB together).
+   `ollama pull qwen3:8b` (about 15 GB together).
 2. Write `.env` and `.env.gate` with the setup script. It asks for the Flagsmith keys (typed
    hidden) and offers the Ollama defaults: `bash scripts/setup_env.sh` on macOS/Linux, or
    `powershell -ExecutionPolicy Bypass -File scripts\setup_env.ps1` on Windows.
@@ -185,7 +185,7 @@ key.
 | `LLM_THINK`, `LLM_TIMEOUT_S` | `.env` | Agents, investigator | Optional. Ollama runs with `think=false` unless `LLM_THINK=1`; timeout per call |
 | `SANDBOX_PARALLEL` | `.env` | Search | Replays run at once (default 8). Use `1` with Ollama unless `OLLAMA_NUM_PARALLEL` is raised |
 | `PRICE_MODEL_CHEAP`, `PRICE_MODEL_FLAGSHIP` | `.env` | Agents | Optional USD per 1M tokens as `in,out`. Local models keep the notional defaults so `cost saving kept` stays comparable |
-| `MODEL_CHEAP`, `MODEL_FLAGSHIP` | `.env` | Agents | Real model IDs behind the flag values `model_cheap` and `model_flagship`. Ollama on the Mac: `llama3.2:3b` and `qwen3:14b` |
+| `MODEL_CHEAP`, `MODEL_FLAGSHIP` | `.env` | Agents | Real model IDs behind the flag values `model_cheap` and `model_flagship`. Ollama on the Mac: `qwen3:8b` and `qwen3:14b` |
 | `GATE_URL` | `.env` | API | Where the API reaches the gate (`http://gate:8100` in compose) |
 | `WEB_ORIGIN` | `.env` | API | Allowed browser origin (CORS), default `http://localhost:3000` |
 | `MOCK` | `.env` | Development | `1` serves fixture data so the UI works without the backend |

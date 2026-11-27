@@ -79,7 +79,7 @@ case "$llm_provider" in
     else llm_base="http://host.docker.internal:11434"; fi
     read_plain llm_base "Ollama URL" "$llm_base"
     echo "  Use model names exactly as 'ollama list' shows them."
-    read_plain model_cheap "Ollama model for model_cheap" "llama3.2:3b"
+    read_plain model_cheap "Ollama model for model_cheap" "qwen3:8b"
     read_plain model_flagship "Ollama model for model_flagship" "qwen3:14b"
     read_plain parallel "Parallel replays (1 unless OLLAMA_NUM_PARALLEL is raised)" "1"
     ;;

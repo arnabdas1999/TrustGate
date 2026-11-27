@@ -15,7 +15,7 @@ Environment (API container, .env):
 - LLM_PROVIDER: ollama (OLLAMA_URL or LLM_BASE_URL, default http://localhost:11434; under
   docker compose http://host.docker.internal:11434; no key), groq or gemini (LLM_API_KEY), or
   openai (LLM_BASE_URL); see agent/llm.py. MODEL_CHEAP is the investigator's model (e.g.
-  llama3.2:3b on Ollama). LLM_LIVE=0 switches
+  qwen3:8b on Ollama). LLM_LIVE=0 switches
   the LLM off (diff order and template explanations)
 """
 
