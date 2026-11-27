@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { formatValue } from "@/lib/format";
 import { useActiveTime, usePolling } from "@/lib/hooks";
+import { Icon } from "./Icon";
 import { ProposalCard } from "./ProposalCard";
 import { SearchMatrix } from "./SearchMatrix";
 import { StatusBadge } from "./StatusBadge";
@@ -21,24 +22,34 @@ export function InvestigationDetail() {
   useActiveTime(id);
 
   if (!view) {
-    return <p className="muted">{error ? `Could not load: ${error}` : "Loading…"}</p>;
+    return error ? (
+      <p className="error">Could not load: {error}</p>
+    ) : (
+      <div className="card" aria-busy="true" aria-label="Loading investigation" style={{ display: "grid", gap: 12 }}>
+        <div className="skeleton" style={{ width: "40%" }} />
+        <div className="skeleton" />
+        <div className="skeleton" style={{ width: "70%" }} />
+      </div>
+    );
   }
   const { investigation: inv, proposal, calls, rollback_of, active_ms } = view;
   const budgetShare = Math.min(1, inv.runs_used / inv.budget_runs);
+  const agent = inv.domain === "opspilot" ? "OpsPilot" : "VaultGuard";
 
   return (
     <>
-      <p>
-        <Link href="/">← All investigations</Link>
-      </p>
+      <Link href="/" className="back-link">
+        <Icon name="arrowLeft" size={14} />
+        All investigations
+      </Link>
       <header className="page-head">
         <div>
-          <h1>
-            {inv.domain === "opspilot" ? "OpsPilot" : "VaultGuard"} incident{" "}
-            <span className="muted small">{inv.id}</span>
-          </h1>
+          <div className="eyebrow">
+            {agent} · <span className="mono">{inv.id}</span>
+          </div>
+          <h1>{agent} incident</h1>
           <p className="muted">
-            Mode: {inv.mode === "guided" ? "LLM-guided search" : "plain ddmin"}
+            {inv.mode === "guided" ? "LLM-guided search" : "Plain ddmin"}
             {inv.segment && (
               <>
                 {" "}
@@ -47,19 +58,28 @@ export function InvestigationDetail() {
             )}
           </p>
         </div>
-        <StatusBadge status={inv.status} />
+        <StatusBadge status={inv.status} large />
       </header>
 
       <StatusBanner status={inv.status} hasRollback={rollback_of !== null} />
 
-      <section className="card">
+      <section className="card" aria-label="Progress">
         <Timeline timestamps={inv.timestamps} />
         <div className="budget">
-          <span className="muted small">
-            Budget: {inv.runs_used} / {inv.budget_runs} runs · ${inv.usd_used.toFixed(2)} / $
-            {inv.budget_usd.toFixed(2)}
-          </span>
-          <div className="bar">
+          <div className="budget-head">
+            <span>Run budget</span>
+            <span className="num">
+              {inv.runs_used} / {inv.budget_runs} runs · ${inv.usd_used.toFixed(2)} / ${inv.budget_usd.toFixed(2)}
+            </span>
+          </div>
+          <div
+            className="bar"
+            role="progressbar"
+            aria-label="Run budget used"
+            aria-valuemin={0}
+            aria-valuemax={inv.budget_runs}
+            aria-valuenow={inv.runs_used}
+          >
             <div style={{ width: `${budgetShare * 100}%` }} />
           </div>
         </div>
@@ -77,22 +97,34 @@ export function InvestigationDetail() {
       )}
 
       <section className="card">
-        <h2>Search</h2>
+        <div className="card-head">
+          <h2>
+            <Icon name="search" />
+            Search
+          </h2>
+        </div>
         {inv.culprit_set.length > 0 && (
-          <p>
-            Minimal failure-inducing set:{" "}
+          <div className="culprit-line" style={{ marginBottom: 16 }}>
+            <span className="muted small">Minimal failure-inducing set</span>
             {inv.culprit_set.map((c) => (
-              <code key={c.flag}>
-                {c.flag}: {formatValue(c.old)} → {formatValue(c.new)}
-              </code>
+              <span key={c.flag} className="culprit-chip">
+                {c.flag}: <span className="from">{formatValue(c.old)}</span> →{" "}
+                <span className="to">{formatValue(c.new)}</span>
+              </span>
             ))}
-          </p>
+          </div>
         )}
         <SearchMatrix suspects={inv.suspects} steps={inv.steps} culprits={inv.culprit_set} />
       </section>
 
       <section className="card">
-        <h2>Gate activity</h2>
+        <div className="card-head">
+          <h2>
+            <Icon name="activity" />
+            Gate activity
+          </h2>
+          <span className="muted small">Every Flagsmith call goes through the gate</span>
+        </div>
         <ToolCallLog entries={audit ?? []} />
       </section>
     </>

@@ -18,8 +18,26 @@ const TONE: Record<InvestigationStatus, string> = {
   not_reproducible: "warn",
 };
 
-export function StatusBadge({ status }: { status: InvestigationStatus }) {
-  return <span className={`badge badge-${TONE[status]}`}>{STATUS_LABEL[status]}</span>;
+/** Work in progress: the dot pulses (static under reduced motion). */
+const LIVE = new Set<InvestigationStatus>([
+  "capturing",
+  "reproducing",
+  "searching",
+  "validating",
+  "approved",
+  "applied",
+]);
+
+export function StatusBadge({ status, large }: { status: InvestigationStatus; large?: boolean }) {
+  const classes = ["badge", `badge-${TONE[status]}`];
+  if (LIVE.has(status)) classes.push("badge-live");
+  if (large) classes.push("badge-lg");
+  return (
+    <span className={classes.join(" ")}>
+      <span className="badge-dot" aria-hidden />
+      {STATUS_LABEL[status]}
+    </span>
+  );
 }
 
 const OUTCOME_TONE: Record<TestOutcome, string> = {
@@ -28,6 +46,17 @@ const OUTCOME_TONE: Record<TestOutcome, string> = {
   INCONCLUSIVE: "warn",
 };
 
+const OUTCOME_LABEL: Record<TestOutcome, string> = {
+  PASS: "Pass",
+  FAIL: "Fail",
+  INCONCLUSIVE: "Inconclusive",
+};
+
 export function OutcomeBadge({ outcome }: { outcome: TestOutcome }) {
-  return <span className={`badge badge-${OUTCOME_TONE[outcome]}`}>{outcome}</span>;
+  return (
+    <span className={`badge badge-${OUTCOME_TONE[outcome]}`}>
+      <span className="badge-dot" aria-hidden />
+      {OUTCOME_LABEL[outcome]}
+    </span>
+  );
 }

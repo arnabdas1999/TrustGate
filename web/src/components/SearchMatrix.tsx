@@ -32,15 +32,20 @@ export function SearchMatrix({
         <table className="matrix">
           <thead>
             <tr>
-              <th>Phase</th>
+              <th scope="col">Phase</th>
               {suspects.map((s) => (
-                <th key={s.flag} className={culpritFlags.has(s.flag) ? "culprit" : undefined}>
+                <th
+                  key={s.flag}
+                  scope="col"
+                  className={`flag-col${culpritFlags.has(s.flag) ? " culprit" : ""}`}
+                >
                   <code>{s.flag}</code>
+                  {culpritFlags.has(s.flag) && <span className="sr-only"> (culprit)</span>}
                 </th>
               ))}
-              <th>Runs</th>
-              <th>Failures</th>
-              <th>Result</th>
+              <th scope="col">Runs</th>
+              <th scope="col">Failures</th>
+              <th scope="col">Result</th>
             </tr>
           </thead>
           <tbody>
@@ -49,18 +54,23 @@ export function SearchMatrix({
               const override = Object.keys(step.config.segment_overrides).length > 0;
               return (
                 <tr key={i}>
-                  <td>
+                  <td className="phase">
                     {PHASE_LABEL[step.phase]}
-                    {override && <span className="muted"> + segment override</span>}
-                    {!step.fresh && <span className="muted"> (cached)</span>}
+                    {override && <span className="phase-note">+ segment override</span>}
+                    {!step.fresh && <span className="phase-note">cached</span>}
                   </td>
                   {suspects.map((s) => (
                     <td key={s.flag} className="dot-cell">
-                      {applied.has(s.flag) ? "●" : ""}
+                      {applied.has(s.flag) && (
+                        <>
+                          <span className={`dot${culpritFlags.has(s.flag) ? " dot-culprit" : ""}`} aria-hidden />
+                          <span className="sr-only">applied</span>
+                        </>
+                      )}
                     </td>
                   ))}
-                  <td>{step.runs}</td>
-                  <td>{step.failures}</td>
+                  <td className="num">{step.runs}</td>
+                  <td className="num">{step.failures}</td>
                   <td>
                     <OutcomeBadge outcome={step.outcome} />
                   </td>
@@ -71,9 +81,10 @@ export function SearchMatrix({
         </table>
       </div>
       {suspects.length > 0 && (
-        <p className="muted small">
-          {searchRuns} search runs so far. Trying every combination would take{" "}
-          {2 ** suspects.length} configurations × 3 = {exhaustive} runs.
+        <p className="muted small" style={{ margin: "16px 0 0" }}>
+          <span className="num">{searchRuns}</span> search runs so far. Trying every combination
+          would take <span className="num">{2 ** suspects.length}</span> configurations × 3 ={" "}
+          <span className="num">{exhaustive}</span> runs.
         </p>
       )}
     </div>

@@ -12,6 +12,7 @@ import {
   percent,
 } from "@/lib/format";
 import { useApproverSession } from "@/lib/hooks";
+import { Icon } from "./Icon";
 import type { Investigation, McpCall, Proposal, RepairCandidate } from "@/lib/types";
 
 /** Real candidates from the search carry no ops (only the chosen one is built), so describe
@@ -96,22 +97,34 @@ export function ProposalCard({
   return (
     <section className={`card proposal ${waiting ? "proposal-waiting" : ""}`}>
       <header className="proposal-head">
-        <h2>{title}</h2>
-        <span className="muted small">payload {proposal.payload_hash.slice(0, 12)}</span>
+        <h2>
+          <Icon name={rollbackOf ? "undo" : waiting ? "alert" : "shield"} size={18} />
+          {title}
+        </h2>
+        <span className="payload" title={proposal.payload_hash}>
+          payload {proposal.payload_hash.slice(0, 12)}
+        </span>
       </header>
 
       {rollbackOf && (
         <p className="banner banner-warn">
+          <Icon name="undo" />
+          <span>
           This undoes repair <code>{rollbackOf}</code>, which was written but not confirmed by the
           read-back. It is a separate change and needs its own approval.
+          </span>
         </p>
       )}
 
-      <p>{proposal.explanation}</p>
+      <p className="explanation">{proposal.explanation}</p>
 
       {validation && (
         <p className="evidence">
-          <strong>Evidence:</strong> {evidenceLine(validation.runs, validation.failures, validation.distinct_behaviours)}
+          <Icon name="check" />
+          <span>
+            <strong>Evidence:</strong>{" "}
+            {evidenceLine(validation.runs, validation.failures, validation.distinct_behaviours)}
+          </span>
         </p>
       )}
 
@@ -120,11 +133,11 @@ export function ProposalCard({
           <table>
             <thead>
               <tr>
-                <th>Option</th>
-                <th>Flagsmith change</th>
-                <th>Violations</th>
-                <th>Held-out passes</th>
-                <th>Cost saving kept</th>
+                <th scope="col">Option</th>
+                <th scope="col">Flagsmith change</th>
+                <th scope="col">Violations</th>
+                <th scope="col">Held-out passes</th>
+                <th scope="col">Cost saving kept</th>
               </tr>
             </thead>
             <tbody>
@@ -133,18 +146,25 @@ export function ProposalCard({
                 return (
                   <tr key={i} className={isChosen ? "chosen" : undefined}>
                     <td>
-                      {KIND_LABEL[c.kind]}
-                      {isChosen && <span className="badge badge-good">proposed</span>}
+                      <span className="option-name">
+                        {KIND_LABEL[c.kind]}
+                        {isChosen && (
+                          <span className="badge badge-good">
+                            <span className="badge-dot" aria-hidden />
+                            Proposed
+                          </span>
+                        )}
+                      </span>
                     </td>
                     <td>{describeCandidate(c, investigation)}</td>
-                    <td>{c.violations ?? "—"}</td>
-                    <td>
+                    <td className="num">{c.violations ?? "—"}</td>
+                    <td className="num">
                       {c.heldout_passes ?? "—"} / {c.heldout_runs ?? "—"}
                       {c.baseline_heldout_passes !== null && (
                         <span className="muted"> (baseline {c.baseline_heldout_passes})</span>
                       )}
                     </td>
-                    <td>{percent(c.cost_kept)}</td>
+                    <td className="num">{percent(c.cost_kept)}</td>
                   </tr>
                 );
               })}
@@ -153,14 +173,25 @@ export function ProposalCard({
         </div>
       )}
 
-      <h3>The exact change Flagsmith will receive</h3>
+      <h3 className="section-label">
+        <Icon name="terminal" />
+        The exact change Flagsmith will receive
+      </h3>
       {calls.length > 0 ? (
         <>
           <p className="muted small">
             {calls.length === 1 ? "One call" : `${calls.length} calls`} the gate will send, only
             after approval. The approval id is filled in when you approve.
           </p>
-          <pre className="code">{JSON.stringify(calls, null, 2)}</pre>
+          <div className="code-wrap">
+            <div className="code-bar">
+              <span>Flagsmith MCP</span>
+              <span>
+                <Icon name="lock" size={12} /> sent by the gate after approval
+              </span>
+            </div>
+            <pre className="code">{JSON.stringify(calls, null, 2)}</pre>
+          </div>
         </>
       ) : (
         <p className="muted small">The gate has not rendered the call yet.</p>
@@ -180,7 +211,8 @@ export function ProposalCard({
 
       {waiting && !session && (
         <form
-          className="row"
+          className="row approve-bar"
+          style={{ alignItems: "flex-end" }}
           onSubmit={(e) => {
             e.preventDefault();
             void run(async () => {
@@ -189,29 +221,37 @@ export function ProposalCard({
             });
           }}
         >
-          <input
-            type="password"
-            placeholder="Approver password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-          />
+          <label className="field">
+            Approver password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+            />
+          </label>
           <button type="submit" disabled={busy || !password}>
+            <Icon name="lock" />
             Sign in to approve
           </button>
         </form>
       )}
 
       {waiting && session && (
-        <div className="row">
+        <div className="row approve-bar">
           <button
             className="primary"
             disabled={busy}
             onClick={() => void run(() => api.approve(proposal.id, session.token))}
           >
+            <Icon name="check" />
             Approve and apply
           </button>
-          <button disabled={busy} onClick={() => void run(() => api.reject(proposal.id, session.token))}>
+          <button
+            className="danger"
+            disabled={busy}
+            onClick={() => void run(() => api.reject(proposal.id, session.token))}
+          >
             Reject
           </button>
           <span className="muted small">
@@ -223,11 +263,18 @@ export function ProposalCard({
         </div>
       )}
 
-      {error && <p className="error">{error}</p>}
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
 
       {proposal.readback.length > 0 && (
         <>
-          <h3>What Flagsmith serves now</h3>
+          <h3 className="section-label">
+            <Icon name="check" />
+            What Flagsmith serves now
+          </h3>
           <ul className="readback">
             {proposal.readback.map((r, i) => (
               <li key={i}>

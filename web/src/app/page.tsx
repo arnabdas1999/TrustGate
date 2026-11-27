@@ -5,6 +5,7 @@ export default function Home() {
     <>
       <header className="page-head">
         <div>
+          <div className="eyebrow">Incidents</div>
           <h1>Investigations</h1>
           <p className="muted">
             When an AI agent breaks after a Flagsmith release, TrustGate finds the flag change that
@@ -13,9 +14,7 @@ export default function Home() {
           </p>
         </div>
       </header>
-      <section className="card">
-        <InvestigationList />
-      </section>
+      <InvestigationList />
     </>
   );
 }

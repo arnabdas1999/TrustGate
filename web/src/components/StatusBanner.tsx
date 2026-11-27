@@ -1,6 +1,14 @@
 import type { InvestigationStatus } from "@/lib/types";
+import { Icon, type IconName } from "./Icon";
 
 type Tone = "good" | "warn" | "bad" | "neutral";
+
+const TONE_ICON: Record<Tone, IconName> = {
+  good: "check",
+  warn: "alert",
+  bad: "x",
+  neutral: "info",
+};
 
 /** One plain sentence on what the current status means and what the human can do. */
 function describe(status: InvestigationStatus, hasRollback: boolean): [Tone, string] | null {
@@ -47,5 +55,10 @@ export function StatusBanner({
   const info = describe(status, hasRollback);
   if (!info) return null;
   const [tone, text] = info;
-  return <p className={`banner banner-${tone}`}>{text}</p>;
+  return (
+    <p className={`banner banner-${tone}`} role="status">
+      <Icon name={TONE_ICON[tone]} />
+      <span>{text}</span>
+    </p>
+  );
 }
