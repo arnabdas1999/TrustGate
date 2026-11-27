@@ -18,6 +18,8 @@ export function Anchor({ id, anchors, position }: { id: string; anchors: AnchorM
   const ref = useRef<Group>(null);
   useFrame(({ camera, size }) => {
     if (!ref.current) return;
+    // matrixWorld is stale until the first render; update it so frame one projects correctly
+    ref.current.updateWorldMatrix(true, false);
     v.setFromMatrixPosition(ref.current.matrixWorld).project(camera);
     anchors.set(id, {
       x: ((v.x + 1) / 2) * size.width,

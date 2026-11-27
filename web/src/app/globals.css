@@ -1391,7 +1391,6 @@ tr.chosen td {
   left: 0;
   top: 0;
   opacity: 0;
-  transition: opacity 180ms ease;
   will-change: transform;
 }
 
