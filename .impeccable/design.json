@@ -1,0 +1,199 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-27T00:00:00Z",
+  "title": "Design System: TrustGate",
+  "extensions": {
+    "colorMeta": {
+      "scene": { "role": "neutral", "displayName": "Twilight Navy", "canonical": "#0e1a2d", "tonalRamp": ["oklch(15% 0.03 258)", "oklch(21% 0.04 258)", "oklch(28% 0.05 258)", "oklch(38% 0.06 258)", "oklch(50% 0.06 258)", "oklch(64% 0.05 258)", "oklch(80% 0.03 258)", "oklch(95% 0.01 258)"] },
+      "scene-raised": { "role": "neutral", "displayName": "Raised Navy", "canonical": "#15243a", "tonalRamp": ["oklch(15% 0.03 255)", "oklch(24% 0.04 255)", "oklch(32% 0.05 255)", "oklch(42% 0.06 255)", "oklch(54% 0.06 255)", "oklch(67% 0.05 255)", "oklch(82% 0.03 255)", "oklch(95% 0.01 255)"] },
+      "panel": { "role": "neutral", "displayName": "Frost Panel", "canonical": "rgba(13, 22, 38, 0.72)" },
+      "panel-solid": { "role": "neutral", "displayName": "Solid Panel", "canonical": "#111d31" },
+      "panel-line": { "role": "neutral", "displayName": "Hairline", "canonical": "rgba(214, 232, 255, 0.12)" },
+      "panel-line-strong": { "role": "neutral", "displayName": "Strong Hairline", "canonical": "rgba(214, 232, 255, 0.22)" },
+      "well": { "role": "neutral", "displayName": "Well", "canonical": "rgba(2, 8, 20, 0.45)" },
+      "ink": { "role": "neutral", "displayName": "Ink", "canonical": "#f2f6fc" },
+      "ink-2": { "role": "neutral", "displayName": "Ink 2", "canonical": "#c3cfdf" },
+      "ink-3": { "role": "neutral", "displayName": "Ink 3", "canonical": "#93a3b8" },
+      "green": { "role": "primary", "displayName": "Verified Green", "canonical": "#4ade80", "tonalRamp": ["oklch(18% 0.04 150)", "oklch(28% 0.07 150)", "oklch(40% 0.11 150)", "oklch(52% 0.15 150)", "oklch(66% 0.18 150)", "oklch(80% 0.18 150)", "oklch(88% 0.12 150)", "oklch(95% 0.05 150)"] },
+      "green-hover": { "role": "primary", "displayName": "Verified Green Hover", "canonical": "#6ee7a0" },
+      "on-green": { "role": "primary", "displayName": "Deep Forest", "canonical": "#052e16" },
+      "amber": { "role": "secondary", "displayName": "Needs-You Amber", "canonical": "#fbbf24", "tonalRamp": ["oklch(20% 0.04 80)", "oklch(32% 0.07 80)", "oklch(45% 0.10 80)", "oklch(58% 0.13 80)", "oklch(70% 0.15 80)", "oklch(84% 0.16 84)", "oklch(91% 0.10 88)", "oklch(96% 0.04 90)"] },
+      "sky": { "role": "secondary", "displayName": "Running Sky", "canonical": "#7dd3fc", "tonalRamp": ["oklch(18% 0.03 230)", "oklch(30% 0.06 230)", "oklch(42% 0.08 230)", "oklch(56% 0.10 230)", "oklch(70% 0.11 230)", "oklch(83% 0.10 230)", "oklch(90% 0.06 230)", "oklch(96% 0.02 230)"] },
+      "red": { "role": "secondary", "displayName": "Failed Red", "canonical": "#f87171", "tonalRamp": ["oklch(18% 0.04 22)", "oklch(28% 0.08 22)", "oklch(40% 0.13 22)", "oklch(52% 0.17 22)", "oklch(64% 0.19 22)", "oklch(72% 0.16 22)", "oklch(84% 0.09 22)", "oklch(95% 0.03 22)"] },
+      "del-ink": { "role": "secondary", "displayName": "Deletion Ink", "canonical": "#fda4a4" },
+      "ins-ink": { "role": "primary", "displayName": "Insertion Ink", "canonical": "#86efac" },
+      "plastic-white": { "role": "tertiary", "displayName": "Soft Plastic White", "canonical": "#f1f2f7" },
+      "prop-white": { "role": "tertiary", "displayName": "Prop White", "canonical": "#e8eaf2" },
+      "visor": { "role": "tertiary", "displayName": "Night Visor", "canonical": "#0d1426" },
+      "team-opspilot": { "role": "tertiary", "displayName": "OpsPilot Amber", "canonical": "#f59e0b", "tonalRamp": ["oklch(20% 0.04 70)", "oklch(32% 0.07 70)", "oklch(45% 0.11 70)", "oklch(58% 0.14 70)", "oklch(70% 0.16 70)", "oklch(80% 0.14 74)", "oklch(89% 0.09 80)", "oklch(96% 0.03 85)"] },
+      "team-vaultguard": { "role": "tertiary", "displayName": "VaultGuard Teal", "canonical": "#14b8a6", "tonalRamp": ["oklch(18% 0.03 182)", "oklch(29% 0.05 182)", "oklch(41% 0.08 182)", "oklch(54% 0.10 182)", "oklch(70% 0.13 182)", "oklch(80% 0.11 182)", "oklch(89% 0.07 182)", "oklch(96% 0.02 182)"] },
+      "team-gatekeeper": { "role": "tertiary", "displayName": "Gatekeeper Cobalt", "canonical": "#3b82f6", "tonalRamp": ["oklch(18% 0.05 260)", "oklch(28% 0.09 260)", "oklch(40% 0.14 260)", "oklch(52% 0.18 260)", "oklch(62% 0.19 260)", "oklch(74% 0.13 260)", "oklch(86% 0.07 260)", "oklch(95% 0.02 260)"] },
+      "token-culprit": { "role": "tertiary", "displayName": "Culprit Red", "canonical": "#ef4444" },
+      "token-fixed": { "role": "tertiary", "displayName": "Fixed Green", "canonical": "#22c55e" },
+      "sealed-slate": { "role": "neutral", "displayName": "Sealed Slate", "canonical": "#64748b" },
+      "zone-ring": { "role": "neutral", "displayName": "Zone Blue", "canonical": "#3d7cc9" },
+      "key-light": { "role": "neutral", "displayName": "Key Light", "canonical": "#d6e8ff" },
+      "rim-light": { "role": "neutral", "displayName": "Rim Light", "canonical": "#9cc9ff" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Inbox hangar headline only; 30px under 900px." },
+      "headline": { "displayName": "Headline", "purpose": "The story panel's one-sentence verdict, with the culprit flag inline as a red code chip." },
+      "title": { "displayName": "Title", "purpose": "Panel and drawer headings (14px to 17px)." },
+      "body": { "displayName": "Body", "purpose": "Base text; hangar copy caps at 46ch." },
+      "body-sm": { "displayName": "Body small", "purpose": "Story facts, step cards, evidence lines, notices." },
+      "label": { "displayName": "Label", "purpose": "Status pills, meta lines, form labels, scene tags." },
+      "mono": { "displayName": "Mono", "purpose": "Flags, values, ids, times, calls and diff lines, always tabular." }
+    },
+    "shadows": [
+      { "name": "hud-lift", "value": "0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 18px 50px rgba(2, 8, 20, 0.45)", "purpose": "Every floating HUD panel over the scene." },
+      { "name": "waiting-glow", "value": "0 0 0 1px rgba(251, 191, 36, 0.18), 0 18px 60px rgba(251, 191, 36, 0.08), 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 18px 50px rgba(2, 8, 20, 0.45)", "purpose": "Approval panel while it waits for a human (with a 45% amber border)." },
+      { "name": "drawer-cast", "value": "-24px 0 60px rgba(2, 8, 20, 0.5)", "purpose": "Evidence drawer over the navy scrim." },
+      { "name": "status-glow", "value": "0 0 8px currentColor", "purpose": "Status dots in pills and scene tags; 6px on timeline nodes and the culprit dot." },
+      { "name": "focus-ring", "value": "0 0 0 3px rgba(125, 211, 252, 0.22)", "purpose": "Input focus, with a sky border. Other controls use a 2px sky outline offset 2px." },
+      { "name": "frost", "value": "backdrop-filter: blur(14px) saturate(140%)", "purpose": "HUD panel material; scene tags use blur(6px)." }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.23, 1, 0.32, 1)", "purpose": "Entrances, press feedback, meter fill, row lift." },
+      { "name": "ease-drawer", "value": "cubic-bezier(0.32, 0.72, 0, 1)", "purpose": "Evidence drawer: 340ms in, 260ms out." },
+      { "name": "hud-in", "value": "520ms ease-out, from opacity 0 and translateY(10px)", "purpose": "Panels rise once on load; top bar 420ms, step card 260ms; story delayed 80ms, approval 140ms." },
+      { "name": "arena-in", "value": "700ms ease-out opacity", "purpose": "Scene fades in once." },
+      { "name": "press", "value": "transform 160ms ease-out to scale(0.97)", "purpose": "Buttons on press; inbox rows press to 0.99." },
+      { "name": "state-colour", "value": "150ms ease", "purpose": "Background, border and colour changes on hover." },
+      { "name": "row-hover", "value": "translateY(-2px)", "purpose": "Inbox rows on hovering, fine-pointer devices only." },
+      { "name": "scrim", "value": "opacity 200ms ease", "purpose": "Drawer scrim." },
+      { "name": "meter", "value": "transform 400ms ease-out (scaleX)", "purpose": "Run budget meter." },
+      { "name": "busy-label", "value": "filter blur(1.5px) and opacity 0.65 over 200ms", "purpose": "Button label while a request runs." },
+      { "name": "breathe", "value": "1.8s ease-in-out infinite, opacity to 0.35", "purpose": "Live status dots." },
+      { "name": "pod-stagger", "value": "70ms per pod, 450ms cubic ease-out, scale 0.9 to 1", "purpose": "Pods enter once, staggered." },
+      { "name": "gate-open", "value": "per-frame lerp at dt * 2.5", "purpose": "Doors slide apart and the energy field dissolves." },
+      { "name": "token-flight", "value": "per-frame lerp at dt * 1.2 along a Catmull-Rom curve", "purpose": "Culprit token turns green and flies through the gate to Prod." },
+      { "name": "reduced-motion", "value": "durations 0.01ms, one iteration; scene motion=false", "purpose": "Everything holds a still, legible pose." }
+    ],
+    "breakpoints": [
+      { "name": "compact", "value": "900px" },
+      { "name": "narrow", "value": "640px" },
+      { "name": "hover-capable", "value": "(hover: hover) and (pointer: fine)" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default outlined glass button for secondary HUD actions (Evidence, Sign in).",
+      "html": "<button class=\"ds-btn\">Evidence</button>",
+      "css": ".ds-btn { font: 500 14px/1 var(--sans); display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border-radius: var(--r-sm); border: 1px solid var(--panel-line-strong); background: rgba(214,232,255,0.06); color: var(--ink); cursor: pointer; transition: transform 160ms var(--ease-out), background-color 150ms ease, border-color 150ms ease; } .ds-btn:hover { background: rgba(214,232,255,0.12); border-color: rgba(214,232,255,0.32); } .ds-btn:active { transform: scale(0.97); } .ds-btn:focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one solid action: approve the exact change.",
+      "html": "<button class=\"ds-btn-primary\">Approve this change</button>",
+      "css": ".ds-btn-primary { font: 600 14px/1 var(--sans); display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 16px; border-radius: var(--r-sm); border: 1px solid var(--green); background: var(--green); color: #052e16; cursor: pointer; transition: transform 160ms var(--ease-out), background-color 150ms ease, border-color 150ms ease; } .ds-btn-primary:hover { background: #6ee7a0; border-color: #6ee7a0; } .ds-btn-primary:active { transform: scale(0.97); } .ds-btn-primary:focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; }"
+    },
+    {
+      "name": "Reject Button",
+      "kind": "button",
+      "refersTo": "button-reject",
+      "description": "Reject the proposal; red text and outline, red tint on hover.",
+      "html": "<button class=\"ds-btn-reject\">Reject</button>",
+      "css": ".ds-btn-reject { font: 500 14px/1 var(--sans); min-height: 44px; padding: 0 16px; border-radius: var(--r-sm); border: 1px solid rgba(248,113,113,0.35); background: transparent; color: var(--red); cursor: pointer; transition: transform 160ms var(--ease-out), background-color 150ms ease, border-color 150ms ease; } .ds-btn-reject:hover { background: var(--red-bg); border-color: rgba(248,113,113,0.5); } .ds-btn-reject:active { transform: scale(0.97); } .ds-btn-reject:focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; }"
+    },
+    {
+      "name": "Password Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Recessed field for the approver sign-in.",
+      "html": "<input class=\"ds-input\" type=\"password\" placeholder=\"Approver password\" />",
+      "css": ".ds-input { font: 400 14px var(--sans); height: 44px; padding: 0 12px; border-radius: var(--r-sm); border: 1px solid var(--panel-line-strong); background: rgba(2,8,20,0.45); color: var(--ink); transition: border-color 150ms ease, box-shadow 150ms ease; } .ds-input:focus-visible { outline: none; border-color: var(--sky); box-shadow: 0 0 0 3px rgba(125,211,252,0.22); }"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "status-pill",
+      "description": "Investigation status in its job colour with a glowing dot; live statuses breathe.",
+      "html": "<span class=\"ds-pill ds-pill-amber\"><span class=\"ds-pill-dot\"></span>Waiting for approval</span> <span class=\"ds-pill ds-pill-sky ds-live\"><span class=\"ds-pill-dot\"></span>Searching</span> <span class=\"ds-demo\">Demo data</span>",
+      "css": ".ds-pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font: 500 12.5px var(--sans); white-space: nowrap; } .ds-pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; } .ds-pill-amber { color: var(--amber); background: var(--amber-bg); } .ds-pill-sky { color: var(--sky); background: var(--sky-bg); } .ds-live .ds-pill-dot { animation: ds-breathe 1.8s ease-in-out infinite; } @keyframes ds-breathe { 50% { opacity: 0.35; } } .ds-demo { display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: 999px; border: 1px dashed rgba(251,191,36,0.55); color: var(--amber); font: 500 12px var(--sans); }"
+    },
+    {
+      "name": "HUD Card",
+      "kind": "card",
+      "refersTo": "hud-card",
+      "description": "Frosted panel floating over the scene; the story panel shown.",
+      "html": "<section class=\"ds-hud\"><h1 class=\"ds-headline\">OpsPilot broke when <code class=\"ds-culprit\">retry_policy</code> changed</h1><p class=\"ds-fix\">Fix: segment override on <strong>env=prod</strong></p></section>",
+      "css": ".ds-hud { width: 420px; padding: 18px 20px; background: var(--panel); backdrop-filter: blur(14px) saturate(140%); border: 1px solid var(--panel-line); border-radius: var(--r); box-shadow: var(--shadow); color: var(--ink); font-family: var(--sans); } .ds-headline { margin: 0; font-size: 24px; line-height: 1.2; font-weight: 600; letter-spacing: -0.025em; } .ds-culprit { font-family: var(--mono); font-size: 0.8em; font-weight: 500; color: var(--red); background: var(--red-bg); padding: 1px 6px; border-radius: 4px; } .ds-fix { margin: 8px 0 0; font-size: 14px; color: var(--ink-2); } .ds-fix strong { color: var(--green); font-family: var(--mono); font-weight: 500; font-size: 13.5px; }"
+    },
+    {
+      "name": "Diff Card",
+      "kind": "custom",
+      "refersTo": "diff-card",
+      "description": "The exact Flagsmith change, deletion and insertion lines in mono.",
+      "html": "<div class=\"ds-diff-card\"><div class=\"ds-diff-meta\">Segment override<strong>retry_policy</strong></div><pre class=\"ds-diff\"><div class=\"ds-del\"><span>-</span><span>aggressive</span></div><div class=\"ds-ins\"><span>+</span><span>standard</span></div></pre></div>",
+      "css": ".ds-diff-card { width: 360px; border: 1px solid var(--panel-line); border-radius: var(--r-sm); overflow: hidden; background: rgba(2,8,20,0.35); } .ds-diff-meta { display: flex; flex-direction: column; padding: 8px 12px; border-bottom: 1px solid var(--panel-line); font: 400 12px var(--sans); color: var(--ink-3); } .ds-diff-meta strong { font: 500 13px var(--mono); color: var(--ink); } .ds-diff { margin: 0; padding: 4px 0; font: 400 13px/1.8 var(--mono); } .ds-diff div { display: grid; grid-template-columns: 30px 1fr; } .ds-diff span:first-child { text-align: center; } .ds-del { background: var(--del-bg); color: var(--del-ink); } .ds-ins { background: var(--ins-bg); color: var(--ins-ink); }"
+    },
+    {
+      "name": "Notice",
+      "kind": "custom",
+      "refersTo": "hud-card",
+      "description": "One plain status sentence on the status tint with a stroke icon; no side stripe.",
+      "html": "<p class=\"ds-notice\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M22 11.1V12a10 10 0 1 1-5.9-9.1\"/><path d=\"m9 11 3 3L22 4\"/></svg><span>Verified: Flagsmith serves the repair to the affected identities.</span></p>",
+      "css": ".ds-notice { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 9px 11px; border-radius: var(--r-sm); font: 400 13px/1.55 var(--sans); color: var(--ink-2); background: var(--green-bg); max-width: 400px; } .ds-notice svg { color: var(--green); margin-top: 2px; flex-shrink: 0; }"
+    },
+    {
+      "name": "Scene Tag",
+      "kind": "custom",
+      "refersTo": "scene-tag",
+      "description": "DOM label projected onto a 3D anchor, with an optional glowing status dot.",
+      "html": "<div class=\"ds-tag\"><i class=\"ds-tag-dot\"></i><span>Waiting for your approval</span></div>",
+      "css": ".ds-tag { display: inline-flex; align-items: center; gap: 7px; padding: 6px 11px; border-radius: var(--r-sm); background: rgba(10,18,32,0.82); border: 1px solid var(--panel-line); backdrop-filter: blur(6px); color: var(--ink); font: 500 12.5px/1.3 var(--sans); white-space: nowrap; } .ds-tag-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 8px var(--amber); }"
+    },
+    {
+      "name": "Inbox Row",
+      "kind": "nav",
+      "refersTo": "hud-card",
+      "description": "Investigation row with a glowing team mark; lifts on hover, presses on click.",
+      "html": "<a class=\"ds-row\" href=\"#\" style=\"--team:#f59e0b\"><span class=\"ds-row-mark\"></span><span><span class=\"ds-row-title\">OpsPilot</span><br><span class=\"ds-row-sub\">3 flags changed in prod</span></span><span class=\"ds-row-time\">09:41</span></a>",
+      "css": ".ds-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 16px; padding: 14px 16px; border-radius: var(--r); border: 1px solid var(--panel-line); background: rgba(214,232,255,0.03); color: var(--ink); text-decoration: none; font-family: var(--sans); width: 480px; transition: transform 160ms var(--ease-out), background-color 150ms ease, border-color 150ms ease; } .ds-row:hover { transform: translateY(-2px); background: rgba(214,232,255,0.06); border-color: var(--panel-line-strong); } .ds-row:active { transform: scale(0.99); } .ds-row:focus-visible { outline: 2px solid var(--sky); outline-offset: 2px; } .ds-row-mark { width: 34px; height: 34px; border-radius: 9px; background: var(--team); box-shadow: 0 0 18px color-mix(in srgb, var(--team) 45%, transparent); } .ds-row-title { font-weight: 600; } .ds-row-sub { font-size: 13px; color: var(--ink-3); } .ds-row-time { font: 400 12px var(--mono); color: var(--ink-3); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Twilight Studio",
+    "overview": "An investigation is staged, not tabulated. A deep navy studio floor under soft key and rim light holds a small cast of soft white plastic robots: the agent under test in its team colour, its replays sealed in glass sandbox pods that glow by outcome, a cobalt Gatekeeper before an amber energy-field gate, and a Prod robot on a platform behind it. The search, the culprit, the gate and the fix are objects on that stage, driven by real investigation data, and the person can drag to look around and click a pod to read its step.\n\nThe interface is a heads-up display floating over the scene: frosted navy panels with hairline edges, Geist for words and Geist Mono for anything a machine produced (flags, values, ids, times, calls). Density is calm: one story panel, one approval panel, one top bar; everything else lives in the evidence drawer. Colour does jobs only, and the same four status colours carry meaning on the HUD and in the scene, so a red pod, a red pill and a red diff line all say the same thing.\n\nMotion is strong ease-out and spent once: panels rise and fade on load, pods scale in staggered, characters idle softly, and the single dramatic moment is approval, when the gate opens and the culprit token turns green and flies to Prod. Under reduced motion every element holds a still, legible pose.",
+    "keyCharacteristics": [
+      "Full-viewport React Three Fiber stage; procedural characters from primitives, no downloaded assets.",
+      "Frosted HUD panels over the scene; a solid panel only where it covers the scene entirely (drawer).",
+      "Four status colours with fixed jobs shared by HUD and scene; team colours live on characters.",
+      "Geist Sans and Geist Mono, self-hosted; tabular numerals for every value.",
+      "Sharp-ish radii (6px and 8px) for a developer tool; pills only for status.",
+      "Dark only (`color-scheme: dark`); no violet anywhere."
+    ],
+    "rules": [
+      { "name": "The Colour Has a Job Rule", "body": "Amber needs you, sky is running, green is verified, red failed. A status colour never decorates, and the same job keeps the same colour in the HUD and on the stage.", "section": "colors" },
+      { "name": "The Team Colour Stays on the Cast Rule", "body": "Team colours appear on robot plastic and on the small square team marks that name an agent. They never colour text, buttons, status or panels.", "section": "colors" },
+      { "name": "The No Violet Rule", "body": "The palette has no violet or purple at any step.", "section": "colors" },
+      { "name": "The Mono Is for Machines Rule", "body": "Anything a system produced (a flag key, a value, an id, a time, a call, a count) is set in Geist Mono with tabular numerals; anything a person reads as a sentence is Geist Sans.", "section": "typography" },
+      { "name": "The Sentence Case Rule", "body": "No uppercase labels and no tracked-out small caps; hierarchy comes from size, weight and ink level.", "section": "typography" },
+      { "name": "The Glow Means Status Rule", "body": "Light is emitted only by things that carry state: status dots, pod rings and glass, mood lights on the robots, the token, the gate field. Nothing glows for decoration.", "section": "elevation" },
+      { "name": "The Frost Over, Solid Across Rule", "body": "A panel floating over the scene is frosted; a surface that covers the scene entirely (the drawer) is solid.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do keep amber, sky, green and red on their jobs (needs you, running, verified, failed) in both the HUD and the scene.",
+      "Do float HUD panels over the scene as frost (panel fill, blur(14px) saturate(140%), hairline, HUD lift) at a 16px inset.",
+      "Do set flags, values, ids, times and calls in Geist Mono with tabular numerals.",
+      "Do use the strong ease-out (cubic-bezier(0.23, 1, 0.32, 1)) for entrances and press feedback, the drawer curve (cubic-bezier(0.32, 0.72, 0, 1)) for the drawer, and play entrances once on load.",
+      "Do build new characters and props from primitives in clearcoated soft plastic, with team colour only on accents.",
+      "Do give every scene state a still, readable pose under reduced motion.",
+      "Do label demo numbers with the dashed amber demo-data chip."
+    ],
+    "donts": [
+      "Don't use violet or purple at any step.",
+      "Don't colour text, buttons or panels with a team colour.",
+      "Don't add glow to anything that does not carry state.",
+      "Don't use side-stripe accents on cards or callouts; tint the background instead.",
+      "Don't add eyebrow or kicker labels above headings, or uppercase tracked labels.",
+      "Don't apply hover styles on touch devices; gate them behind (hover: hover) and (pointer: fine).",
+      "Don't load downloaded 3D models, textures or icon packages; icons are inline 24px stroke SVGs."
+    ]
+  }
+}
