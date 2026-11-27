@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { useFrame } from "@react-three/fiber";
+import { DoubleSide } from "three";
 import type { Group, Mesh } from "three";
 
 export type Mood = "idle" | "search" | "alert" | "happy" | "sad";
@@ -33,6 +34,7 @@ export function Robot({
   motion = true,
   shield = false,
   seed = 0,
+  hand,
 }: {
   team: string;
   mood?: Mood;
@@ -40,6 +42,8 @@ export function Robot({
   motion?: boolean;
   shield?: boolean;
   seed?: number;
+  /** Something the robot holds in its right hand (the culprit token). */
+  hand?: ReactNode;
 }) {
   const root = useRef<Group>(null);
   const head = useRef<Group>(null);
@@ -61,7 +65,7 @@ export function Robot({
     head.current.rotation.y += (yaw - head.current.rotation.y) * 0.08;
     head.current.rotation.x += (pitch - head.current.rotation.x) * 0.08;
     // arms: happy waves, alert raises the right hand (holding the token), otherwise swing gently
-    const wave = mood === "happy" ? -2.4 + Math.sin(t * 9) * 0.4 : mood === "alert" ? -1.6 : Math.sin(t * 2) * 0.12;
+    const wave = mood === "happy" ? -2.4 + Math.sin(t * 9) * 0.4 : mood === "alert" ? 2.3 + Math.sin(t * 2) * 0.06 : Math.sin(t * 2) * 0.12;
     armR.current.rotation.z += (wave - armR.current.rotation.z) * 0.12;
     const left = mood === "happy" ? 2.4 - Math.sin(t * 9) * 0.4 : mood === "sad" ? 0.1 : -Math.sin(t * 2) * 0.12;
     armL.current.rotation.z += (left - armL.current.rotation.z) * 0.12;
@@ -92,9 +96,13 @@ export function Robot({
           <capsuleGeometry args={[0.3, 0.36, 8, 20]} />
           <Plastic />
         </mesh>
-        <mesh position={[0, 0.82, 0.27]} castShadow>
-          <boxGeometry args={[0.3, 0.2, 0.06]} />
+        <mesh position={[0, 0.84, 0.27]} castShadow>
+          <boxGeometry args={[0.3, 0.18, 0.06]} />
           <Plastic color={team} rough={0.25} />
+        </mesh>
+        <mesh position={[0, 0.71, 0.29]}>
+          <boxGeometry args={[0.22, 0.025, 0.02]} />
+          <meshStandardMaterial color={light} emissive={light} emissiveIntensity={1.6} toneMapped={false} />
         </mesh>
         {shield && (
           <mesh position={[0, 0.84, 0.31]}>
@@ -122,6 +130,7 @@ export function Robot({
             <sphereGeometry args={[0.09, 16, 16]} />
             <Plastic color={team} />
           </mesh>
+          {hand && <group position={[0, -0.6, 0]}>{hand}</group>}
         </group>
         {/* head */}
         <group ref={head} position={[0, 1.42, 0]}>
@@ -129,13 +138,19 @@ export function Robot({
             <sphereGeometry args={[0.36, 32, 32]} />
             <Plastic />
           </mesh>
-          <mesh position={[0, 0, 0.12]} scale={[1, 0.78, 0.82]}>
-            <sphereGeometry args={[0.3, 32, 32]} />
-            <meshPhysicalMaterial color={VISOR} roughness={0.08} metalness={0.3} clearcoat={1} />
+          {/* face plate: two shells concentric with the head, so the outline is a clean curved
+              edge instead of a sphere-on-sphere intersection */}
+          <mesh>
+            <sphereGeometry args={[0.374, 48, 32, Math.PI / 2 - 0.95, 1.9, Math.PI / 2 - 0.6, 1.2]} />
+            <meshPhysicalMaterial color="#d9dde8" roughness={0.3} clearcoat={0.6} side={DoubleSide} />
           </mesh>
-          <group ref={eyes} position={[0, 0.03, 0.385]}>
+          <mesh>
+            <sphereGeometry args={[0.388, 48, 32, Math.PI / 2 - 0.82, 1.64, Math.PI / 2 - 0.48, 0.96]} />
+            <meshPhysicalMaterial color={VISOR} roughness={0.06} metalness={0.25} clearcoat={1} side={DoubleSide} />
+          </mesh>
+          <group ref={eyes} position={[0, 0.02, 0.372]}>
             {[-0.1, 0.1].map((x) => (
-              <mesh key={x} position={[x, 0, 0]} scale={[1, 1.3, 0.45]}>
+              <mesh key={x} position={[x, 0, 0]} rotation={[0, x * 2.6, 0]} scale={[1, 1.3, 0.4]}>
                 <sphereGeometry args={[0.058, 20, 20]} />
                 <meshStandardMaterial color={light} emissive={light} emissiveIntensity={2.2} toneMapped={false} />
               </mesh>

@@ -197,9 +197,6 @@ function Hud({ view, refresh }: { view: InvestigationView; refresh: () => void }
       )}
 
       <section className="hud-card story" aria-label="What happened">
-        <p className="story-meta">
-          {AGENT[inv.domain]} agent{inv.segment && <> · segment <code>{inv.segment}</code></>}
-        </p>
         <h1 className="story-headline">{headline(inv)}</h1>
         {op && (
           <p className="story-fix">

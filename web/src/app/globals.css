@@ -324,10 +324,10 @@ input:focus-visible {
 /* Labels the scene projects (drei Html) */
 .tag {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 1px;
-  padding: 5px 10px;
+  gap: 7px;
+  padding: 6px 11px;
   border-radius: var(--r-sm);
   background: rgba(10, 18, 32, 0.82);
   border: 1px solid var(--panel-line);
@@ -341,20 +341,21 @@ input:focus-visible {
 }
 
 .tag span {
-  color: var(--ink-3);
-  font-size: 10.5px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.tag strong {
-  font-weight: 600;
-}
-
-.tag-token strong {
-  font-family: var(--mono);
+  color: var(--ink);
   font-size: 12.5px;
+  font-weight: 500;
+}
+
+.tag-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tag-token span {
+  font-family: var(--mono);
+  font-weight: 500;
 }
 
 .tag-zone {
@@ -633,7 +634,12 @@ input:focus-visible {
   color: var(--ink-3);
 }
 
-.progress li + li::before {
+.progress li {
+  white-space: nowrap;
+}
+
+/* the connector belongs to the step before it, so a wrapped line never starts with one */
+.progress li:not(:last-child)::after {
   content: "";
   width: 14px;
   height: 1px;
@@ -1396,12 +1402,9 @@ tr.chosen td {
 
 @media (max-width: 640px) {
   .hud-top {
-    gap: 8px;
+    flex-wrap: wrap;
+    gap: 6px 8px;
     padding: 6px;
-  }
-
-  .hud-top .pill {
-    display: none;
   }
 
   .hud-btn {
@@ -1422,4 +1425,10 @@ tr.chosen td {
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
+}
+
+.countdown-label {
+  color: var(--ink-3);
+  font-family: var(--sans);
+  margin-right: 4px;
 }

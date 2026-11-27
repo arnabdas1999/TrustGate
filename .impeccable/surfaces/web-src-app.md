@@ -34,11 +34,13 @@ run budget, Evidence). Stage: pods arc on the left with a Sandbox label, agent r
 the culprit token, Gatekeeper before the gate, Prod platform behind. Story panel bottom-left;
 approval panel bottom-right holds the primary action.
 
-FORM: Pinned by the user, no roll position. seed: none (pinned): "i want the UI to be immersive
-interactive and should be visually appealing to the judges. it should be graphics heavy not a plain
-linear dashboard. there can be some characters or something." The user then chose the "3D sandbox
-arena" concept.
-
+FORM: Not from the roll's list position: seed:c5c08b5bf235b1cb rolled this round (an assigned
+direction, then a re-roll, then a bolder re-roll); the user rejected all three hands, then said
+"Clean product, no metaphor" and "I don't want this to look like another dashboard", and finally
+asked for "immersive interactive ... graphics heavy not a plain linear dashboard ... some characters
+or something" (context, not a pin). The agent offered three concepts (3D sandbox arena, isometric
+control world, illustrated story); the user chose option 1, "3D sandbox arena", and the world
+(twilight studio, soft plastic, navy) was the agent's.
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the
 verdict, DESIGN.md, and every shipping raster carrying its provenance
 

@@ -75,7 +75,12 @@ export function ApprovePanel({
           <Icon name={rollbackOf ? "undo" : "shield"} size={16} />
           {title}
         </h2>
-        {waiting && now > 0 && <span className="countdown num">{countdown(left)}</span>}
+        {waiting && now > 0 && (
+          <span className="countdown num">
+            <span className="countdown-label">Expires in</span>
+            {countdown(left)}
+          </span>
+        )}
       </header>
 
       {rollbackOf && (
@@ -116,6 +121,11 @@ export function ApprovePanel({
           className="approve-form"
           onSubmit={(e) => {
             e.preventDefault();
+            if (!password) {
+              setError("Enter the approver password.");
+              document.getElementById("approver-password")?.focus();
+              return;
+            }
             void run("login", async () => {
               await login(password);
               setPassword("");
@@ -131,7 +141,7 @@ export function ApprovePanel({
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
             />
-            <button type="submit" className="primary" disabled={busy !== null || !password}>
+            <button type="submit" className="primary" disabled={busy !== null}>
               <span className="label">{busy === "login" ? "Signing in…" : "Sign in"}</span>
             </button>
           </div>

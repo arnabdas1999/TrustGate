@@ -98,7 +98,7 @@ export default function Hangar({ items, onOpen, motion }: { items: HangarItem[];
           </group>
         </PresentationControls>
       </Canvas>
-      <LabelLayer anchors={anchors} labels={items.map((i) => ({ id: i.id, kicker: i.status, text: i.agent, tone: TONE[i.tone] }))} />
+      <LabelLayer anchors={anchors} labels={items.map((i) => ({ id: i.id, text: `${i.agent} · ${i.status}`, dot: TONE[i.tone] }))} />
     </div>
   );
 }

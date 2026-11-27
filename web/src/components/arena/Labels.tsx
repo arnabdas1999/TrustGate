@@ -33,9 +33,9 @@ export function Anchor({ id, anchors, position }: { id: string; anchors: AnchorM
 
 export interface LabelSpec {
   id: string;
-  kicker?: string;
   text: string;
-  tone?: string;
+  /** Colour of the leading state dot (omit for no dot). */
+  dot?: string;
   className?: string;
 }
 
@@ -66,8 +66,8 @@ export function LabelLayer({ anchors, labels }: { anchors: AnchorMap; labels: La
     <div className="label-layer" ref={layer} aria-hidden>
       {labels.map((l) => (
         <div key={l.id} data-anchor={l.id} className={`tag ${l.className ?? ""}`}>
-          {l.kicker && <span style={l.tone ? { color: l.tone } : undefined}>{l.kicker}</span>}
-          <strong>{l.text}</strong>
+          {l.dot && <i className="tag-dot" style={{ background: l.dot, boxShadow: `0 0 8px ${l.dot}` }} />}
+          <span>{l.text}</span>
         </div>
       ))}
     </div>

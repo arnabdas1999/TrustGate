@@ -11,8 +11,8 @@ import {
   RoundedBox,
   Sparkles,
 } from "@react-three/drei";
-import { ACESFilmicToneMapping, CatmullRomCurve3, SRGBColorSpace, Vector3 } from "three";
-import type { Group, Mesh, MeshBasicMaterial } from "three";
+import { ACESFilmicToneMapping, AdditiveBlending, CatmullRomCurve3, Color, SRGBColorSpace, ShaderMaterial, Vector3 } from "three";
+import type { Group, Mesh } from "three";
 import { Anchor, LabelLayer, type AnchorMap, type LabelSpec } from "./Labels";
 import { Robot, type Mood } from "./Robot";
 
@@ -150,25 +150,39 @@ function Pod({
         <group position={[0, 0.16, 0]}>
           <Robot team={team} mood={step.outcome === "FAIL" ? "sad" : "idle"} scale={0.42} motion={motion} seed={index} />
         </group>
-        {step.hasCulprit && (
-          <mesh position={[0, 1.55, 0]} rotation={[0, 0, Math.PI / 4]}>
-            <octahedronGeometry args={[0.07]} />
-            <meshStandardMaterial color="#f87171" emissive="#f87171" emissiveIntensity={2.5} toneMapped={false} />
-          </mesh>
-        )}
+
         <Anchor id={`pod-${index}`} anchors={anchors} position={[0, 1.85, 0]} />
       </group>
     </group>
   );
 }
 
+/** The culprit token as the robot holds it in its raised right hand. */
+function HeldToken({ anchors, motion }: { anchors: AnchorMap; motion: boolean }) {
+  const ref = useRef<Group>(null);
+  useFrame((_, dt) => {
+    if (ref.current && motion) ref.current.rotation.y += dt * 1.8;
+  });
+  return (
+    <group ref={ref} position={[0, 0.06, 0]}>
+      <mesh>
+        <octahedronGeometry args={[0.17]} />
+        <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={1.1} roughness={0.3} />
+      </mesh>
+      <pointLight color="#ef4444" intensity={2.5} distance={2.2} />
+      <Anchor id="token" anchors={anchors} position={[0, 0.34, 0]} />
+    </group>
+  );
+}
+
+/** On approval the token leaves the hand, turns green and flies through the gate to Prod. */
 function Token({ from, gate, motion, anchors }: { from: Vector3; gate: GateState; motion: boolean; anchors: AnchorMap }) {
   const ref = useRef<Group>(null);
   const progress = useRef(0);
   const curve = useMemo(
     () =>
       new CatmullRomCurve3([
-        new Vector3(from.x + 0.55, 2.05, from.z + 0.1),
+        new Vector3(from.x + 0.93, 1.72, from.z),
         new Vector3(GATE_POS.x - 0.6, 2.6, GATE_POS.z + 0.6),
         new Vector3(GATE_POS.x, 1.4, GATE_POS.z),
         new Vector3(PROD_POS.x, 2.2, PROD_POS.z),
@@ -187,13 +201,13 @@ function Token({ from, gate, motion, anchors }: { from: Vector3; gate: GateState
     ref.current.rotation.y += motion ? dt * 1.8 : 0;
   });
 
-  const color = flying ? "#4ade80" : "#f87171";
+  const color = "#22c55e";
   return (
     <group ref={ref}>
       <Float speed={motion ? 2 : 0} floatIntensity={0.4} rotationIntensity={0}>
         <mesh>
           <octahedronGeometry args={[0.2]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.4} toneMapped={false} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.4} roughness={0.3} />
         </mesh>
         <pointLight color={color} intensity={3} distance={2.5} />
         <Anchor id="token" anchors={anchors} position={[0, 0.42, 0]} />
@@ -202,22 +216,51 @@ function Token({ from, gate, motion, anchors }: { from: Vector3; gate: GateState
   );
 }
 
+const FIELD_VERTEX = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+`;
+
+// An energy field: bright edges, fine moving scanlines and one sweeping band, added to the scene
+// so whatever stands behind the gate shows through.
+const FIELD_FRAGMENT = `
+uniform vec3 uColor;
+uniform float uTime;
+uniform float uOpacity;
+varying vec2 vUv;
+void main() {
+  float d = min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y));
+  float rim = 1.0 - smoothstep(0.0, 0.07, d);
+  float band = exp(-pow((fract(vUv.y - uTime * 0.28) - 0.5) * 12.0, 2.0));
+  float lines = 0.5 + 0.5 * sin(vUv.y * 140.0 - uTime * 5.0);
+  float a = uOpacity * (0.18 + rim * 0.95 + band * 0.7 + lines * 0.1);
+  gl_FragColor = vec4(uColor * (0.7 + rim * 1.4 + band), a);
+}
+`;
+
 function Gate({ state, motion }: { state: GateState; motion: boolean }) {
   const left = useRef<Mesh>(null);
   const right = useRef<Mesh>(null);
-  const field = useRef<MeshBasicMaterial>(null);
+  const field = useRef<ShaderMaterial>(null);
+  const uniforms = useMemo(() => ({ uColor: { value: new Color("#fbbf24") }, uTime: { value: 0 }, uOpacity: { value: 0 } }), []);
   const color = GATE_COLOR[state];
   const open = state === "opening" || state === "open";
 
   useFrame(({ clock }, dt) => {
     const t = clock.getElapsedTime();
     const k = motion ? Math.min(1, dt * 2.5) : 1;
-    const slide = open ? 0.98 : 0.42;
+    const slide = open ? 0.98 : 0.43;
     if (left.current) left.current.position.x += (-slide - left.current.position.x) * k;
     if (right.current) right.current.position.x += (slide - right.current.position.x) * k;
-    if (field.current) {
-      const base = open ? 0 : state === "locked" ? 0.42 : 0.22;
-      field.current.opacity = base + (motion && !open ? Math.sin(t * 3) * 0.06 : 0);
+    const target = open ? 0 : state === "locked" ? 0.62 : state === "breached" ? 0.5 : 0.22;
+    const f = field.current;
+    if (f) {
+      f.uniforms.uOpacity.value += (target - f.uniforms.uOpacity.value) * k;
+      f.uniforms.uTime.value = motion ? t : 0;
+      f.uniforms.uColor.value.set(color);
     }
   });
 
@@ -232,22 +275,31 @@ function Gate({ state, motion }: { state: GateState; motion: boolean }) {
         <meshPhysicalMaterial color="#e8eaf2" roughness={0.35} clearcoat={0.6} />
       </RoundedBox>
       <mesh position={[0, 2.95, 0.29]}>
-        <boxGeometry args={[1.4, 0.08, 0.02]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={2.2} toneMapped={false} />
+        <boxGeometry args={[1.6, 0.07, 0.02]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.8} toneMapped={false} />
       </mesh>
+      <pointLight position={[0, 2.6, 0.6]} color={color} intensity={2.4} distance={3.2} />
       {/* doors */}
       <mesh ref={left} position={[-0.42, 1.3, 0]} castShadow>
         <boxGeometry args={[0.84, 2.5, 0.08]} />
-        <meshPhysicalMaterial color="#dfe8f6" roughness={0.12} transmission={0.55} thickness={0.12} clearcoat={0.8} transparent opacity={0.9} />
+        <meshPhysicalMaterial color="#e6edf8" roughness={0.42} transmission={0.6} thickness={0.2} clearcoat={0.6} transparent opacity={0.85} />
       </mesh>
       <mesh ref={right} position={[0.42, 1.3, 0]} castShadow>
         <boxGeometry args={[0.84, 2.5, 0.08]} />
-        <meshPhysicalMaterial color="#dfe8f6" roughness={0.12} transmission={0.55} thickness={0.12} clearcoat={0.8} transparent opacity={0.9} />
+        <meshPhysicalMaterial color="#e6edf8" roughness={0.42} transmission={0.6} thickness={0.2} clearcoat={0.6} transparent opacity={0.85} />
       </mesh>
       {/* energy field in front of the doors */}
-      <mesh position={[0, 1.3, 0.08]}>
+      <mesh position={[0, 1.3, 0.1]}>
         <planeGeometry args={[2.1, 2.55]} />
-        <meshBasicMaterial ref={field} color={color} transparent opacity={0.3} depthWrite={false} toneMapped={false} />
+        <shaderMaterial
+          ref={field}
+          vertexShader={FIELD_VERTEX}
+          fragmentShader={FIELD_FRAGMENT}
+          uniforms={uniforms}
+          transparent
+          depthWrite={false}
+          blending={AdditiveBlending}
+        />
       </mesh>
     </group>
   );
@@ -290,8 +342,9 @@ function Stage({ team, gate, motion, anchors }: { team: string; gate: GateState;
 function CameraRig() {
   useFrame(({ camera, size }) => {
     const aspect = size.width / Math.max(1, size.height);
-    const dist = aspect >= 1.45 ? 13.2 : aspect >= 1.1 ? 16 : aspect >= 0.8 ? 20 : 25;
-    camera.position.z += (dist - camera.position.z) * 0.2;
+    // keep the whole cast (pod arc to the Prod platform, about 7.4 units each side) in frame
+    const dist = aspect >= 1.45 ? 13.2 : 7.4 / (Math.tan((17 * Math.PI) / 180) * aspect);
+    camera.position.z = dist; // snap: a resize should frame the cast at once, not drift
     camera.position.y = 4.6 * (dist / 13.2) * 0.85 + 0.7;
     camera.lookAt(0.3, -0.2, -1.2);
   });
@@ -302,6 +355,7 @@ function Scene(props: ArenaProps & { anchors: AnchorMap; hovered: number | null;
   const { steps, mood, gate, culprit, team, motion, selected, onSelect, anchors, hovered, onHover } = props;
   const robot = useRef<Group>(null);
   const searching = mood === "search";
+  const flying = gate === "opening" || gate === "open";
   const lastPod = steps.length > 0 ? podPosition(steps.length - 1, steps.length) : ROBOT_HOME;
   const target = searching ? new Vector3(lastPod.x + 0.7, 0, lastPod.z + 1.1) : ROBOT_HOME;
 
@@ -330,6 +384,7 @@ function Scene(props: ArenaProps & { anchors: AnchorMap; hovered: number | null;
         shadow-camera-top={9}
         shadow-camera-bottom={-9}
       />
+      <directionalLight position={[-5, 6, -9]} intensity={1.6} color="#9cc9ff" />
       <Environment resolution={256}>
         <Lightformer intensity={2} position={[0, 5, -6]} scale={[12, 4, 1]} color="#d6e8ff" />
         <Lightformer intensity={1.5} position={[-6, 3, 2]} scale={[4, 6, 1]} color="#ffd8a8" />
@@ -362,9 +417,9 @@ function Scene(props: ArenaProps & { anchors: AnchorMap; hovered: number | null;
             />
           ))}
           <group ref={robot} position={ROBOT_HOME}>
-            <Robot team={team} mood={mood} scale={1.15} motion={motion} />
+            <Robot team={team} mood={mood} scale={1.15} motion={motion} hand={culprit && !flying ? <HeldToken anchors={anchors} motion={motion} /> : undefined} />
           </group>
-          {culprit && <Token from={ROBOT_HOME} gate={gate} motion={motion} anchors={anchors} />}
+          {culprit && flying && <Token from={ROBOT_HOME} gate={gate} motion={motion} anchors={anchors} />}
           <Gate state={gate} motion={motion} />
           <group position={[GATE_POS.x - 1.75, 0, GATE_POS.z + 1.25]} rotation={[0, -0.35, 0]}>
             <Robot team="#3b82f6" mood={keeperMood} scale={1.3} motion={motion} shield seed={3} />
@@ -388,15 +443,16 @@ export default function Arena(props: ArenaProps) {
   const flying = props.gate === "opening" || props.gate === "open";
   const keeper =
     props.gate === "open" ? "Change verified" : props.gate === "opening" ? "Writing the change" : props.gate === "locked" ? "Waiting for your approval" : props.gate === "breached" ? "Read-back failed" : "Gate closed";
+  const prodDot = props.gate === "open" ? "#4ade80" : props.gate === "opening" ? "#7dd3fc" : "#f87171";
   const labels: LabelSpec[] = [
-    { id: "sandbox", kicker: "Sandbox", text: `${props.agentName} replays`, className: "tag-zone" },
-    { id: "prod", kicker: "Flagsmith", text: props.environment, className: "tag-zone" },
-    { id: "keeper", kicker: "Gatekeeper", text: keeper, className: "tag-zone" },
+    { id: "sandbox", text: `${props.agentName} replays`, className: "tag-zone" },
+    { id: "prod", text: `Flagsmith · ${props.environment}`, dot: prodDot, className: "tag-zone" },
+    { id: "keeper", text: keeper, dot: GATE_COLOR[props.gate], className: "tag-zone" },
   ];
-  if (props.culprit) labels.push({ id: "token", kicker: flying ? "fix" : "culprit", text: props.culprit, className: "tag-token" });
+  if (props.culprit) labels.push({ id: "token", text: props.culprit, dot: flying ? "#22c55e" : "#ef4444", className: "tag-token" });
   for (const i of new Set([hovered, props.selected])) {
     const s = i === null ? undefined : props.steps[i];
-    if (s) labels.push({ id: `pod-${i}`, kicker: `${s.failures}/${s.runs} failed`, text: s.label, tone: OUTCOME_COLOR[s.outcome] });
+    if (s) labels.push({ id: `pod-${i}`, text: `${s.label} · ${s.failures}/${s.runs} failed`, dot: OUTCOME_COLOR[s.outcome] });
   }
   return (
     <div className="arena">
