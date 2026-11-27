@@ -6,6 +6,8 @@ Find the change that caused it and fix it in Flagsmith. Work the way you normall
 ## Before you start (timer, not you)
 
 - You have **not** seen this case before, and you have not opened anything in `bench/keys/`.
+- You have not opened `bench/pools.json` (it names each domain's bad change) or any earlier
+  case's result. Keep it that way until you finish all your cases.
 - Your environment is yours alone (`bench-1`, `bench-2` or `bench-3`). Nobody else edits it.
 - The timer starts the clock when you open the alert, and records your **first suspect** the
   moment you say it out loud.
