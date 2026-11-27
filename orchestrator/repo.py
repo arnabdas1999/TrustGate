@@ -3,6 +3,9 @@
 SqliteRepo is the persistent store. DictRepo writes into the API's in-memory Store, so the
 API and the orchestrator see the same objects until api/store.py moves to SQLite. Both keep
 the exact MCP calls the gate rendered for each proposal: Proposal has no field for them yet.
+They also keep, per proposal, the flag values the target environment served just before it
+was registered (the pre-write state): the verifier's "outside the segment" expectation and a
+rollback's undo values come from it, not from the release diff.
 """
 
 from __future__ import annotations
@@ -29,6 +32,8 @@ class Repo(Protocol):
     def put_proposal(self, proposal: Proposal) -> None: ...
     def get_calls(self, proposal_id: str) -> list[dict[str, Any]]: ...
     def put_calls(self, proposal_id: str, calls: list[dict[str, Any]]) -> None: ...
+    def get_served(self, proposal_id: str) -> dict[str, Any] | None: ...
+    def put_served(self, proposal_id: str, values: dict[str, Any]) -> None: ...
 
 
 _TABLES = {"incidents": Incident, "investigations": Investigation, "proposals": Proposal}
@@ -40,7 +45,7 @@ class SqliteRepo:
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._lock = threading.Lock()
         with self._conn:
-            for table in [*_TABLES, "proposal_calls"]:
+            for table in [*_TABLES, "proposal_calls", "proposal_served"]:
                 self._conn.execute(f"CREATE TABLE IF NOT EXISTS {table} "  # noqa: S608
                                    "(id TEXT PRIMARY KEY, body TEXT NOT NULL)")
 
@@ -84,6 +89,13 @@ class SqliteRepo:
     def put_calls(self, proposal_id: str, calls: list[dict[str, Any]]) -> None:
         self._put("proposal_calls", proposal_id, json.dumps(calls))
 
+    def get_served(self, proposal_id: str) -> dict[str, Any] | None:
+        body = self._get("proposal_served", proposal_id)
+        return json.loads(body) if body else None
+
+    def put_served(self, proposal_id: str, values: dict[str, Any]) -> None:
+        self._put("proposal_served", proposal_id, json.dumps(values))
+
 
 class DictRepo:
     """Adapter over api.store.Store (incidents / investigations / proposals dicts)."""
@@ -94,6 +106,7 @@ class DictRepo:
         # card's exact MCP call(s); otherwise held here.
         calls = getattr(store, "proposal_calls", None)
         self._calls: dict[str, list[dict[str, Any]]] = calls if calls is not None else {}
+        self._served: dict[str, dict[str, Any]] = {}  # in memory, like the API store itself
 
     def get_incident(self, incident_id: str) -> Incident | None:
         return self._store.incidents.get(incident_id)
@@ -118,3 +131,9 @@ class DictRepo:
 
     def put_calls(self, proposal_id: str, calls: list[dict[str, Any]]) -> None:
         self._calls[proposal_id] = calls
+
+    def get_served(self, proposal_id: str) -> dict[str, Any] | None:
+        return self._served.get(proposal_id)
+
+    def put_served(self, proposal_id: str, values: dict[str, Any]) -> None:
+        self._served[proposal_id] = dict(values)

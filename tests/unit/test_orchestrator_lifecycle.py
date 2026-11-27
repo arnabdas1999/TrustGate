@@ -658,3 +658,106 @@ def test_per_flag_proposal_explanation_end_to_end(setup):
     assert text.startswith("agent_prompt_version and agent_tool_policy together reproduce the "
                            "failure; the repair reverts agent_tool_policy for everyone and "
                            "keeps agent_prompt_version.")
+
+
+# --- verifier: "outside the segment" = what the environment served before the write --------
+
+class BenchGate(FakeGate):
+    """A bench environment: the release only ran in the sandbox, Flagsmith serves baseline."""
+
+    def read(self, tool, args):
+        out = super().read(tool, args)
+        out["view"]["features"] = {k: {"enabled": True, "value": v, "multivariate": []}
+                                   for k, v in {**BASELINE, "agent_max_steps": "6"}.items()}
+        return out
+
+
+class ServedFlags:
+    """Serves fixed values: `member` to tier-0 prod identities, `other` to everyone else."""
+
+    def __init__(self, member, other):
+        self.member, self.other = member, other
+
+    def identity_flags(self, identity):
+        tier0 = identity.traits.get("env") == "prod" and identity.traits.get("tier") == 0
+        values = self.member if tier0 else self.other
+        return {k: ServedFlag(v, True, False) for k, v in values.items()}
+
+
+def _release_from_file(repo, tmp_path):
+    """As on bench: the release is a captured file (capture_bench), not the live environment."""
+    path = tmp_path / "release_env.json"
+    path.write_text(json.dumps({"values": RELEASE}))
+    inc = repo.get_incident("inc_1")
+    repo.put_incident(inc.model_copy(update={"release_snapshot": f"file:{path}"}))
+
+
+def _orch(setup, gate, flags, search=None):
+    repo = setup[0]
+    return Orchestrator(repo=repo, gate=gate, search=search or ScriptedSearch(
+        ["agent_prompt_version"]), configs=CONFIG, flag_source=lambda env: flags,
+        sleep=lambda s: None, verify_timeout_s=0)
+
+
+def test_bench_segment_override_verifies_against_the_served_baseline(setup, tmp_path):
+    repo = setup[0]
+    _release_from_file(repo, tmp_path)
+    flags = ServedFlags({"agent_prompt_version": "v1_strict"},
+                        {"agent_prompt_version": "v1_strict"})  # bench: baseline outside
+    orch = _orch(setup, BenchGate(), flags)
+    orch.run("inv_1")
+    original = _applied(repo)
+    served = repo.get_served(original.id)
+    assert served["agent_prompt_version"] == "v1_strict" and served["agent_max_steps"] == 6
+    assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED  # was FAILED before
+    assert {r.identity.identifier: r.values["agent_prompt_version"]
+            for r in repo.get_proposal(original.id).readback} == {
+        "payments-prod": "v1_strict", "staging-api": "v1_strict"}
+
+
+def test_prod_segment_override_still_expects_the_live_release_outside(setup):
+    repo, gate, _, _ = setup  # FakeGate serves the release: Prod with the release live
+    flags = ServedFlags({"agent_prompt_version": "v1_strict"},
+                        {"agent_prompt_version": "v1_strict"})  # a write that leaked to all
+    orch = _orch(setup, gate, flags)
+    orch.run("inv_1")
+    _applied(repo)
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED  # staging must keep v2_fast
+
+
+def test_rollback_undoes_to_the_pre_write_value_on_bench_and_on_prod(setup, tmp_path):
+    repo = setup[0]
+    _release_from_file(repo, tmp_path)
+    for gate, undo in ((BenchGate(), "restricted"), (FakeGate(), "expanded")):
+        inv = repo.get_investigation("inv_1")
+        repo.put_investigation(inv.model_copy(update={
+            "status": InvestigationStatus.CAPTURING, "proposal_id": None}))
+        flags = ServedFlags({"agent_tool_policy": "wrong"}, {"agent_tool_policy": "wrong"})
+        orch = _orch(setup, gate, flags, search=PerFlagSearch())  # surgical: tools only
+        orch.run("inv_1")
+        _applied(repo)
+        assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+        rollback = repo.get_proposal(repo.get_investigation("inv_1").proposal_id)
+        assert [(o.tool, o.feature, o.value) for o in rollback.candidate.ops] == [
+            ("update_feature_state", "agent_tool_policy", undo)], gate
+
+
+def test_without_a_recorded_pre_write_state_it_reads_now_then_falls_back(setup):
+    repo, _, _, _ = setup
+
+    class FlakyGate(FakeGate):
+        calls = 0
+
+        def read(self, tool, args):
+            FlakyGate.calls += 1
+            if FlakyGate.calls > 2:  # snapshot + triage work; pre-write and verify reads fail
+                raise RuntimeError("gate down")
+            return super().read(tool, args)
+
+    flags = ServedFlags({"agent_prompt_version": "v1_strict"},
+                        {"agent_prompt_version": "v2_fast"})  # Prod-like read-back
+    orch = _orch(setup, FlakyGate(), flags)
+    orch.run("inv_1")
+    original = _applied(repo)
+    assert repo.get_served(original.id) is None
+    assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED  # release-diff fallback

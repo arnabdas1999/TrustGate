@@ -57,3 +57,15 @@ def test_dict_repo_writes_into_the_api_store():
     store = Store()
     DictRepo(store).put_investigation(_inv())
     assert store.investigations["inv_1"].incident_id == "inc_1"
+
+
+def test_served_values_round_trip_in_both_repos(tmp_path):
+    from types import SimpleNamespace
+
+    from orchestrator.repo import DictRepo, SqliteRepo
+    for repo in (SqliteRepo(tmp_path / "r.db"),
+                 DictRepo(SimpleNamespace(incidents={}, investigations={}, proposals={}))):
+        assert repo.get_served("prop_1") is None
+        repo.put_served("prop_1", {"agent_max_steps": 6, "agent_prompt_version": "v1_strict"})
+        assert repo.get_served("prop_1") == {"agent_max_steps": 6,
+                                             "agent_prompt_version": "v1_strict"}

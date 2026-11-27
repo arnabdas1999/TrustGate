@@ -51,6 +51,7 @@ from orchestrator.proposals import (
 from orchestrator.repo import Repo
 from orchestrator.search_port import SearchEngine, SearchOutcome, SearchUnavailable
 from orchestrator.snapshots import (
+    _typed_like,
     load_snapshot,
     release_diff,
     same_segment_rules,
@@ -229,11 +230,14 @@ class Orchestrator:
             text = explain(culprit_set=inv.culprit_set, segment=inv.segment, chosen=cand,
                            options=result.candidates, llm=self.llm, model=self.llm_model,
                            fallback=_explain(inv, cand, ops)).text
+            served = self._served(inv, cfg)  # the pre-write state, read just before registering
             proposal, calls = build_proposal(inv.id, cand, ops, self.gate,
                                              environment=cfg.environment, explanation=text,
                                              now=self.clock(), sleep=self.sleep)
             self.repo.put_proposal(proposal)
             self.repo.put_calls(proposal.id, calls)
+            if served is not None:
+                self.repo.put_served(proposal.id, served)
             inv.proposal_id = proposal.id
             inv.timestamps.proposal = self.clock()
             return self._save(inv, InvestigationStatus.PROPOSED)
@@ -306,23 +310,57 @@ class Orchestrator:
         self._save(inv, InvestigationStatus.FAILED)
         return status
 
+    def _served(self, inv: Investigation, cfg: DomainConfig) -> dict[str, Any] | None:
+        """What the target environment serves now, per flag (environment defaults, from the
+        gate's environment document), typed like the release diff so "12" comes back as 12.
+        None if the gate can't be read."""
+        try:
+            view = self.gate.read("get_environment_document", {"environment": cfg.environment})
+            features = view["view"]["features"]
+        except Exception:  # noqa: BLE001 (callers fall back; never block a proposal on it)
+            log.warning("investigation %s: could not read %s's served values", inv.id,
+                        cfg.environment, exc_info=True)
+            return None
+        like = {c.flag: c.old if c.old is not None else c.new for c in inv.suspects}
+        return {name: _typed_like(state.get("value"), like.get(name))
+                for name, state in features.items()}
+
+    def _pre_write(self, inv: Investigation, proposal: Proposal,
+                   cfg: DomainConfig) -> dict[str, Any]:
+        """The values the environment served before `proposal` was written: the recorded
+        pre-write state, else a fresh read (segment overrides leave defaults untouched), else
+        the release diff (correct only where the release is live, as before)."""
+        release = {c.flag: c.new for c in inv.suspects}
+        served = self.repo.get_served(proposal.id)
+        if served is None:
+            log.warning("verify %s: no recorded pre-write state for %s; reading it now",
+                        inv.id, proposal.id)
+            served = self._served(inv, cfg)
+        return {**release, **(served or {})}
+
     def _read_back(self, inv: Investigation, proposal: Proposal) -> Any:
         incident = self.repo.get_incident(inv.incident_id)
         cfg = self.configs[inv.domain]
+        # Outside the segment an identity must get what the environment served before the
+        # write (on Prod the release, on a bench environment the baseline), never assumed.
         expected = expectations(proposal.candidate.ops, incident.identity, cfg.control_identity,
-                                {c.flag: c.new for c in inv.suspects})
+                                self._pre_write(inv, proposal, cfg))
         return verify(expected, self.flag_source(cfg.environment),
                       timeout_s=self.verify_timeout_s, sleep=self.sleep)
 
     def _propose_rollback(self, inv: Investigation, failed: Proposal, why: str) -> None:
         cfg = self.configs[inv.domain]
-        ops = inverse_ops(failed.candidate.ops, {c.flag: c.new for c in inv.suspects})
+        # Undo puts back what was served before the failed write, not the release value.
+        ops = inverse_ops(failed.candidate.ops, self._pre_write(inv, failed, cfg))
         explanation = (f"{ROLLBACK_PREFIX} {failed.id}: read-back did not confirm the repair "
                        f"({why or 'no detail'}). This undoes it; it needs its own approval.")
+        served = self._served(inv, cfg)  # the state the rollback will be written over
         rollback, calls = build_proposal(inv.id, failed.candidate, ops, self.gate,
                                          environment=cfg.environment, explanation=explanation,
                                          now=self.clock(), sleep=self.sleep,
                                          proposal_id=failed.id + ROLLBACK_SUFFIX)
         self.repo.put_proposal(rollback)
         self.repo.put_calls(rollback.id, calls)
+        if served is not None:
+            self.repo.put_served(rollback.id, served)
         inv.proposal_id = rollback.id  # the UI shows the card to approve; the id names the repair
