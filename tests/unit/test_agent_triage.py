@@ -125,7 +125,7 @@ def _with_ids(rule, start=1):
 def test_triage_reads_the_gate_canonical_view():
     from gate.fingerprint import canonical_view
 
-    doc = {"id": 1, "name": "Demo Production",
+    doc = {"id": 1, "name": "OpsPilot Prod",
            "feature_states": [{"enabled": True, "feature": {"name": "agent_model"},
                                "feature_state_value": "model_cheap"}],
            "project": {"segments": [

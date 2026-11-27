@@ -12,7 +12,7 @@ from gate.allowlist import (
 from gate.scope import GateScope
 
 SCOPE = GateScope(project_id=56664, project_name="OpsPilot",
-                  environments={"Development": 121197, "Demo Production": 121198})
+                  environments={"Development": 121197, "OpsPilot Prod": 121198})
 
 # The smallest valid arguments for each read: just its required scope argument, in scope.
 MINIMAL_ARGS = {
@@ -139,7 +139,7 @@ def test_read_scoped_to_our_project():
 @pytest.mark.parametrize("args", [
     {"environment": 121197, "feature": 306127},
     {"environment": "121198", "feature": 306127},
-    {"environment": "Demo Production", "feature": 306127},
+    {"environment": "OpsPilot Prod", "feature": 306127},
 ])
 def test_read_in_allowed_environment(args):
     assert check_read("list_feature_segments", args, SCOPE) is ReadKind.MCP

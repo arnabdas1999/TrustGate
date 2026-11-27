@@ -5,8 +5,11 @@ request, so the API starts them in daemon threads and the UI polls the investiga
 
 Environment (API container, .env):
 - GATE_URL (default http://localhost:8100)
-- TRUSTGATE_ENVIRONMENT: the environment the repair is written to (default Demo Production)
-- TRUSTGATE_PROJECT_OPSPILOT / TRUSTGATE_PROJECT_VAULTGUARD: project names (default the domain)
+- TRUSTGATE_PROJECT: the one Flagsmith project for both agents (default TrustGate);
+  TRUSTGATE_PROJECT_OPSPILOT / TRUSTGATE_PROJECT_VAULTGUARD override it per domain
+- TRUSTGATE_ENVIRONMENT_OPSPILOT (default "OpsPilot Prod") and TRUSTGATE_ENVIRONMENT_VAULTGUARD
+  (default "VaultGuard Prod"): the environment each agent's repair is written to. The older
+  single TRUSTGATE_ENVIRONMENT, when set, is the fallback for both
 - FLAGSMITH_SERVER_KEY_<ENV>: a ser. key per environment, for the verifier's read-back
 - TRUSTGATE_SEARCH: "scripted:<flag>,..." for the plumbing demo until search/ lands
 - LLM_PROVIDER=gemini, LLM_API_KEY, MODEL_CHEAP (investigator's model), LLM_LIVE=0 to switch
@@ -27,7 +30,7 @@ from contracts.models import Domain, Identity
 from orchestrator.gate_client import GateClient
 from orchestrator.lifecycle import DomainConfig, Orchestrator
 from orchestrator.repo import DictRepo
-from orchestrator.search_port import search_from_env
+from orchestrator.search_port import sandbox_segments, search_from_env
 from verifier.readback import EdgeFlagSource, FlagSource
 
 log = logging.getLogger("trustgate.orchestrator")
@@ -52,15 +55,24 @@ def server_key_name(environment: str) -> str:
     return "FLAGSMITH_SERVER_KEY_" + re.sub(r"[^A-Z0-9]+", "_", environment.upper()).strip("_")
 
 
+DEFAULT_PROJECT = "TrustGate"
+DEFAULT_ENVIRONMENTS = {Domain.OPSPILOT: "OpsPilot Prod", Domain.VAULTGUARD: "VaultGuard Prod"}
+
+
 def configs_from_env(env: Mapping[str, str] | None = None) -> dict[Domain, DomainConfig]:
+    """One Flagsmith project, one environment per agent (Naman, Nov 26)."""
     e = _env(env)
-    environment = e.get("TRUSTGATE_ENVIRONMENT", "Demo Production")
-    return {
-        Domain.OPSPILOT: DomainConfig(e.get("TRUSTGATE_PROJECT_OPSPILOT", "OpsPilot"),
-                                      environment, CONTROL_IDENTITIES[Domain.OPSPILOT]),
-        Domain.VAULTGUARD: DomainConfig(e.get("TRUSTGATE_PROJECT_VAULTGUARD", "VaultGuard"),
-                                        environment, CONTROL_IDENTITIES[Domain.VAULTGUARD]),
-    }
+    project = e.get("TRUSTGATE_PROJECT", "").strip() or DEFAULT_PROJECT
+    fallback = e.get("TRUSTGATE_ENVIRONMENT", "").strip()
+    configs = {}
+    for domain in (Domain.OPSPILOT, Domain.VAULTGUARD):
+        suffix = domain.value.upper()
+        configs[domain] = DomainConfig(
+            e.get(f"TRUSTGATE_PROJECT_{suffix}", "").strip() or project,
+            e.get(f"TRUSTGATE_ENVIRONMENT_{suffix}", "").strip() or fallback
+            or DEFAULT_ENVIRONMENTS[domain],
+            CONTROL_IDENTITIES[domain])
+    return configs
 
 
 def flag_source_from_env(env: Mapping[str, str] | None = None) -> Callable[[str], FlagSource]:
@@ -88,7 +100,9 @@ def orchestrator_for(store: Any, env: Mapping[str, str] | None = None) -> Orches
                 repo=DictRepo(store), gate=GateClient(e.get("GATE_URL", "http://localhost:8100")),
                 search=search_from_env(e), configs=configs_from_env(e),
                 flag_source=flag_source_from_env(e), llm=llm_from_env(e),
-                llm_model=e.get("MODEL_CHEAP", ""))
+                llm_model=e.get("MODEL_CHEAP", ""),
+                replay_segments=(sandbox_segments
+                                 if e.get("TRUSTGATE_SEARCH", "").strip() == "sandbox" else None))
         return _orchestrators[id(store)]
 
 

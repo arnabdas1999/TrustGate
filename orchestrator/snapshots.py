@@ -78,3 +78,21 @@ def segments_document(view: dict[str, Any]) -> dict[str, Any]:
     """The gate's canonical view, reshaped for agent.triage."""
     return {"project": {"segments": [{"name": name, "rules": seg["rules"]}
                                      for name, seg in sorted(view["segments"].items())]}}
+
+
+def _canon_value(value: Any) -> str:
+    return ("true" if value else "false") if isinstance(value, bool) else str(value)
+
+
+def _canon_rule(rule: dict[str, Any]) -> tuple:
+    conditions = tuple(sorted(
+        (str(c.get("operator", "")).upper(), str(c.get("property_", c.get("property", ""))),
+         _canon_value(c.get("value"))) for c in rule.get("conditions") or []))
+    children = tuple(sorted(_canon_rule(r) for r in rule.get("rules") or []))
+    return (str(rule.get("type", "")).upper(), conditions, children)
+
+
+def same_segment_rules(a: list[dict[str, Any]], b: list[dict[str, Any]]) -> bool:
+    """Same rule shape: ALL/ANY/NONE nesting, operator, property and value ("10000" == 10000,
+    True == "true"). Order doesn't matter; ids and other keys are ignored."""
+    return sorted(_canon_rule(r) for r in a) == sorted(_canon_rule(r) for r in b)

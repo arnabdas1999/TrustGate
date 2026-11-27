@@ -171,7 +171,7 @@ def main() -> int:
     with httpx.Client(base_url=base, timeout=30) as client:
         beats = Beats(client, secret=secret,
                       environment=os.environ.get("BEATS_ENVIRONMENT", ENVIRONMENT),
-                      project=os.environ.get("GATE_PROJECT_NAME", "OpsPilot"),
+                      project=os.environ.get("GATE_PROJECT_NAME", "TrustGate"),
                       token=os.environ.get("GATE_SHARED_TOKEN", "").strip())
         try:
             return beats.run()

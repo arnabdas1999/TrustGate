@@ -3,7 +3,7 @@ import pytest
 from gate.scope import GateScope
 
 SCOPE = GateScope(project_id=56664, project_name="OpsPilot",
-                  environments={"Development": 121197, "Demo Production": 121198})
+                  environments={"Development": 121197, "OpsPilot Prod": 121198})
 
 
 @pytest.mark.parametrize("project", [56664, "56664", "OpsPilot"])
@@ -24,7 +24,7 @@ def test_empty_or_blank_project_name_matches_nothing(name):
     assert scope.allows_project(56664)
 
 
-@pytest.mark.parametrize("environment", [121197, "121198", "Development", "Demo Production"])
+@pytest.mark.parametrize("environment", [121197, "121198", "Development", "OpsPilot Prod"])
 def test_our_environments_by_id_or_name_are_allowed(environment):
     assert SCOPE.allows_environment(environment)
 

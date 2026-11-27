@@ -69,7 +69,7 @@ def test_beats_show_three_refusals_and_leave_no_trace(tmp_path):
 def test_beats_refuse_anything_but_development(tmp_path):
     _, client = _setup(tmp_path)
     out = io.StringIO()
-    beats = Beats(client, secret=SECRET, environment="Demo Production", project="OpsPilot",
+    beats = Beats(client, secret=SECRET, environment="OpsPilot Prod", project="OpsPilot",
                   out=out, sleep=lambda s: None)
     assert beats.run() == 2 and "Development only" in out.getvalue()
 

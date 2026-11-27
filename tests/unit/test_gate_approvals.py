@@ -10,7 +10,7 @@ from gate.scope import GateScope
 SECRET = "test-signing-secret"
 NOW = datetime(2026, 11, 26, 18, 0, 0, 123456, tzinfo=UTC)
 SCOPE = GateScope(project_id=56664, project_name="OpsPilot",
-                  environments={"Development": 121197, "Demo Production": 121198})
+                  environments={"Development": 121197, "OpsPilot Prod": 121198})
 
 
 class Clock:
@@ -215,7 +215,7 @@ def test_written_over_fingerprint_is_remembered_per_environment(tmp_path, clock)
     s1.mark_written_over("Development", "f" * 64)
     s2 = ApprovalStore(path, secret=SECRET, scope=SCOPE, clock=clock)
     assert s2.was_written_over("Development", "f" * 64)
-    assert not s2.was_written_over("Demo Production", "f" * 64)
+    assert not s2.was_written_over("OpsPilot Prod", "f" * 64)
     s2.mark_written_over("Development", "g" * 64)  # only the last one counts
     assert not s2.was_written_over("Development", "f" * 64)
 
