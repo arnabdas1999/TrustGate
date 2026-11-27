@@ -1,0 +1,29 @@
+{
+  "case": "vaultguard-eval-1",
+  "domain": "vaultguard",
+  "set": "eval",
+  "seed": 1,
+  "changes": [
+    {
+      "flag": "agent_tool_policy",
+      "old": "restricted",
+      "new": "expanded"
+    },
+    {
+      "flag": "agent_model",
+      "old": "model_flagship",
+      "new": "model_cheap"
+    },
+    {
+      "flag": "agent_prompt_version",
+      "old": "v1_strict",
+      "new": "v2_fast"
+    },
+    {
+      "flag": "agent_context_mode",
+      "old": "summary",
+      "new": "full_history"
+    }
+  ],
+  "key_sha256": "e9bd31b9bb9ff509f4f5caf926354a3c72c12cdf2fc75070e2410171f019278c"
+}

@@ -1,0 +1,29 @@
+{
+  "case": "opspilot-eval-3",
+  "domain": "opspilot",
+  "set": "eval",
+  "seed": 3,
+  "changes": [
+    {
+      "flag": "agent_context_mode",
+      "old": "summary",
+      "new": "full_history"
+    },
+    {
+      "flag": "agent_tool_policy",
+      "old": "restricted",
+      "new": "expanded"
+    },
+    {
+      "flag": "agent_prompt_version",
+      "old": "v1_strict",
+      "new": "v2_fast"
+    },
+    {
+      "flag": "agent_model",
+      "old": "model_flagship",
+      "new": "model_cheap"
+    }
+  ],
+  "key_sha256": "84b2660404679f93f1099f2e62287d122c1a00ee0f564e2e71ed69435ece29db"
+}
