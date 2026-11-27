@@ -509,6 +509,11 @@ class OpenAICompatProvider:
 OLLAMA_DEFAULT_URL = "http://localhost:11434"
 
 
+# Ollama models that think before answering (same list as agent/llm.py); think=false keeps the
+# whole budget for the answer and the tool calls.
+THINKING_MODELS = ("qwen3", "deepseek-r1")
+
+
 class OllamaChat:
     def __init__(self, provider: OllamaProvider, *, model: str, system: str, user: str,
                  tools: Sequence[ToolSpec], temperature: float, seed: int | None):
@@ -519,8 +524,9 @@ class OllamaChat:
         options: dict[str, Any] = {"temperature": temperature}
         if seed is not None:
             options["seed"] = seed
-        self.body_base: dict[str, Any] = {"model": model, "stream": False,
-                                          "think": provider.think, "options": options}
+        self.body_base: dict[str, Any] = {"model": model, "stream": False, "options": options}
+        if model.startswith(THINKING_MODELS):  # other models aren't sent the setting
+            self.body_base["think"] = provider.think
         if tools:
             self.body_base["tools"] = _function_tools(tools)
         self._calls = _ToolCallParser()

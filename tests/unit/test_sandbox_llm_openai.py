@@ -212,12 +212,19 @@ def test_ollama_native_request_shape():
 
 def test_ollama_no_tools_no_seed_think_on():
     provider, sent = _ollama([(200, _ollama_reply("<think>hmm</think>ok"))], think=True)
-    turn = provider.open_chat(model="m", system="s", user="u", tools=[],
+    turn = provider.open_chat(model="qwen3:14b", system="s", user="u", tools=[],
                               temperature=0.3).send(None)
     body = _body(sent[0])
     assert turn.text == "ok"
     assert "tools" not in body and body["options"] == {"temperature": 0.3}
     assert body["think"] is True
+
+
+def test_ollama_sends_no_think_setting_to_a_model_that_does_not_think():
+    provider, sent = _ollama([(200, _ollama_reply("ok"))])
+    provider.open_chat(model="llama3.2:3b", system="s", user="u", tools=[],
+                       temperature=0.0).send(None)
+    assert "think" not in _body(sent[0])
 
 
 def test_ollama_tool_call_round_trip_through_loop():

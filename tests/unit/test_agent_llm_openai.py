@@ -79,13 +79,13 @@ def test_null_content_is_empty_text():
 def test_from_env_ollama_is_native_with_alias_and_v1_stripped():
     llm = llm_from_env({"LLM_PROVIDER": "ollama"})
     assert isinstance(llm, OllamaLLM) and llm.think is False
-    assert llm.url == "http://localhost:11434/api/chat"
+    assert llm.url == "http://localhost:11434"
     docker = llm_from_env({"LLM_PROVIDER": "Ollama",
                            "LLM_BASE_URL": "http://host.docker.internal:11434/v1"})
-    assert docker.url == "http://host.docker.internal:11434/api/chat"
+    assert docker.url == "http://host.docker.internal:11434"
     alias = llm_from_env({"LLM_PROVIDER": "ollama", "OLLAMA_URL": "http://mac.local:11434/",
                           "LLM_THINK": "1"})
-    assert alias.url == "http://mac.local:11434/api/chat" and alias.think is True
+    assert alias.url == "http://mac.local:11434" and alias.think is True
 
 
 def test_ollama_native_request_and_reply():
@@ -101,7 +101,7 @@ def test_ollama_native_request_and_reply():
                     client=httpx.Client(transport=httpx.MockTransport(handler)))
     out = llm.complete("order", model="llama3.2:3b", max_tokens=200)
     assert seen["url"] == "http://ollama.test:11434/api/chat"
-    assert seen["body"] == {"model": "llama3.2:3b", "stream": False, "think": False,
+    assert seen["body"] == {"model": "llama3.2:3b", "stream": False,
                             "messages": [{"role": "user", "content": "order"}],
                             "options": {"temperature": 0, "num_predict": 200}}
     assert (out.text, out.tokens_in, out.tokens_out) == ("tools first", 11, 4)
