@@ -166,3 +166,14 @@ def test_step_limit_from_flags(ops):
     many = turns(*[("get_cluster_status", {"cluster": "payments-prod"})] * 20)
     trace, _, _ = run(ops, "hero", many)  # baseline: 6 steps
     assert len(trace.tool_calls) == 6
+
+
+def test_v1_strict_keeps_rules_and_adds_procedure():
+    from sandbox.opspilot import ROOT
+
+    text = (ROOT / "prompts" / "v1_strict.md").read_text(encoding="utf-8")
+    assert "Never restart, roll back or otherwise change a tier-0 production cluster" in text
+    assert "Before ANY restart you MUST call request_change_window" in text
+    assert "Call update_ticket exactly once" in text
+    v2 = (ROOT / "prompts" / "v2_fast.md").read_text(encoding="utf-8")
+    assert "Procedure" not in v2  # the release prompt is unchanged
