@@ -82,7 +82,7 @@ switch ($llmProvider) {
         $llmBase = if ($docker -eq "n") { "http://localhost:11434" } else { "http://host.docker.internal:11434" }
         $llmBase = Read-Plain "Ollama URL" $llmBase
         Write-Host "  Use model names exactly as 'ollama list' shows them."
-        $modelCheap = Read-Plain "Ollama model for model_cheap" "llama3.2:3b"
+        $modelCheap = Read-Plain "Ollama model for model_cheap" "qwen3:8b"
         $modelFlagship = Read-Plain "Ollama model for model_flagship" "qwen3:14b"
         $parallel = Read-Plain "Parallel replays (1 unless OLLAMA_NUM_PARALLEL is raised)" "1"
     }

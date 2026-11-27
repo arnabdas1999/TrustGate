@@ -111,7 +111,7 @@ export function ProposalCard({
 
       {validation && (
         <p className="evidence">
-          <strong>Evidence:</strong> {evidenceLine(validation.runs, validation.failures)}
+          <strong>Evidence:</strong> {evidenceLine(validation.runs, validation.failures, validation.distinct_behaviours)}
         </p>
       )}
 
