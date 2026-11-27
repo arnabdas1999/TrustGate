@@ -267,7 +267,7 @@ class GeminiChat:
 
 class GeminiProvider:
     def __init__(self, api_key: str, *, client: httpx.Client | None = None,
-                 retries: int = 6, timeout_s: float = 60.0,
+                 retries: int = 4, timeout_s: float = 90.0,
                  sleep: Callable[[float], None] = time.sleep):
         if not api_key:
             raise LLMError("LLM_API_KEY is not set")
@@ -295,14 +295,17 @@ class GeminiProvider:
                     raise LLMError(f"Gemini unreachable: {type(exc).__name__}") from None
             else:
                 if resp.status_code == 200:
-                    return resp.json()
+                    try:
+                        return resp.json()
+                    except ValueError:
+                        raise LLMError("Gemini returned a non-JSON 200") from None
                 if resp.status_code not in RETRY_STATUS or attempt == self.retries:
                     raise LLMError(f"Gemini HTTP {resp.status_code}: {_error_text(resp)}")
                 retry_after = resp.headers.get("retry-after")
                 if retry_after and retry_after.isdigit():
                     delay = max(delay, float(retry_after))
             self.sleep(delay + random.uniform(0, delay / 2))  # noqa: S311 (jitter, not crypto)
-            delay = min(delay * 2, 30.0)
+            delay = min(delay * 2, 16.0)
         raise LLMError("unreachable")
 
 

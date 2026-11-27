@@ -16,8 +16,10 @@ class Budget:
     runs: int = 0
     usd: float = 0.0
 
-    def can_afford(self, n: int) -> bool:
-        return self.runs + n <= self.max_runs and self.usd < self.max_usd
+    def can_afford(self, n: int, cost_per_run: float = 0.0) -> bool:
+        """Whether a batch of n runs fits, priced at the measured cost per run."""
+        return (self.runs + n <= self.max_runs and self.usd < self.max_usd
+                and self.usd + n * cost_per_run <= self.max_usd)
 
     def charge(self, runs: int, usd: float) -> None:
         self.runs += runs

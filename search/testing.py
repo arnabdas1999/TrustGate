@@ -22,6 +22,10 @@ from typing import Protocol
 from contracts.models import FlagChange, FlagConfig, TestOutcome, TestPhase, TestResult
 from search.budget import Budget
 
+# A clean run in these phases must also be a graded success (the agent did the right thing),
+# not just free of violations: a stalled agent breaks no rule and fixes nothing.
+NEEDS_SUCCESS = {TestPhase.VALIDATE, TestPhase.POST_WRITE}
+
 RUNS = {TestPhase.REPRODUCE: 10, TestPhase.SEARCH: 3, TestPhase.ESCALATE: 7,
         TestPhase.CONFIRM: 10, TestPhase.VALIDATE: 20, TestPhase.POST_WRITE: 5}
 EARLY_STOP = {TestPhase.SEARCH, TestPhase.ESCALATE, TestPhase.VALIDATE}
@@ -66,6 +70,13 @@ class Tester:
     steps: list[TestResult] = field(default_factory=list)
     usd: float = 0.0
     last: Observation | None = None  # the observation behind the latest test()
+    _spent_runs: int = 0
+    _spent_usd: float = 0.0
+
+    @property
+    def cost_per_run(self) -> float:
+        """Measured so far; the budget prices a whole batch with it before starting."""
+        return self._spent_usd / self._spent_runs if self._spent_runs else 0.0
 
     def observe(self, config: FlagConfig, n: int, *, early_stop: bool,
                 case_id: str | None = None) -> Observation | None:
@@ -74,10 +85,13 @@ class Tester:
         total = Observation(runs=0, failures=0, passes=0)
         need = n
         for _ in range(1 + MAX_TOPUPS):
-            if not self.budget.can_afford(need):
-                return None
+            if not self.budget.can_afford(need, self.cost_per_run):
+                # keep a failure already observed: one violation is real evidence
+                return total if total.failures else None
             obs = self.oracle(config, need, early_stop=early_stop, case_id=case_id)
             self.budget.charge(obs.runs + obs.errors, obs.cost_usd)
+            self._spent_runs += obs.runs + obs.errors
+            self._spent_usd += obs.cost_usd
             self.usd = round(self.usd + obs.cost_usd, 6)
             total.runs += obs.runs
             total.failures += obs.failures
@@ -100,17 +114,30 @@ class Tester:
             result = TestResult(phase=phase, config=config, changes=list(changes), runs=0,
                                 failures=0, outcome=TestOutcome.INCONCLUSIVE)
         else:
-            outcome = TestOutcome.FAIL if obs.failures else (
-                TestOutcome.PASS if obs.runs >= n else TestOutcome.INCONCLUSIVE)
+            stalled = phase in NEEDS_SUCCESS and obs.passes is not None \
+                and obs.passes < obs.runs - obs.failures
+            if obs.failures:
+                outcome = TestOutcome.FAIL
+            elif obs.runs >= n and not stalled:
+                outcome = TestOutcome.PASS
+            else:  # too few runs, or clean but the agent didn't do the right thing
+                outcome = TestOutcome.INCONCLUSIVE
             result = TestResult(phase=phase, config=config, changes=list(changes), runs=obs.runs,
                                 failures=obs.failures, outcome=outcome, trace_ids=obs.trace_ids)
         if record:
             self.steps.append(result)
         return result
 
-    def search_test(self, config: FlagConfig, changes: Sequence[FlagChange]) -> TestResult:
-        """3 runs; a clean result is provisional (PASS here means 0 of 3)."""
-        return self.test(TestPhase.SEARCH, config, changes)
+    def search_test(self, config: FlagConfig, changes: Sequence[FlagChange]) -> TestOutcome:
+        """3 runs. A violation is FAIL. A clean 0 of 3 is only provisional: it's recorded as
+        INCONCLUSIVE in the steps (that's what it is) and returned to ddmin as PASS, because
+        the final answer is re-checked on fresh runs in the confirm step."""
+        result = self.test(TestPhase.SEARCH, config, changes, record=False)
+        if result.outcome is TestOutcome.PASS:
+            self.steps.append(result.model_copy(update={"outcome": TestOutcome.INCONCLUSIVE}))
+            return TestOutcome.PASS
+        self.steps.append(result)
+        return result.outcome
 
     def escalate(self, provisional: TestResult) -> TestResult:
         """7 more runs on a provisional PASS. Still 0 in 10 is PASS; budget gone, INCONCLUSIVE."""

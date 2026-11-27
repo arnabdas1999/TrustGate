@@ -73,16 +73,24 @@ def resolve(client: ClientLike, identity: Identity) -> tuple[FlagConfig, list[st
     return FlagConfig(values=values, source=ConfigSource.CAPTURED), defaulted
 
 
+def snapshot_ref(path: str) -> str:
+    """The orchestrator's reference form: "file:<path>" (gate: refs pass through)."""
+    return path if path.startswith(("file:", "gate:")) else f"file:{path}"
+
+
 def capture(adapter: SqliteDomain, case_id: str, identity: Identity, resolved: FlagConfig,
             trace: Trace, db_path: Path, *, baseline_snapshot: str, release_snapshot: str,
-            out_dir: Path = INCIDENTS_DIR) -> Incident:
+            out_dir: Path = INCIDENTS_DIR, name: str | None = None) -> Incident:
+    """Writes <out_dir>/<name>.json (default name: <domain>-<case>-<8 hex>). Pass the bench
+    case name (e.g. opspilot-eval-1) so bench/run_arms.py finds it."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    incident_id = f"{adapter.domain}-{case_id}-{uuid.uuid4().hex[:8]}"
+    incident_id = name or f"{adapter.domain}-{case_id}-{uuid.uuid4().hex[:8]}"
     db_copy = out_dir / f"{incident_id}.db"
     shutil.copyfile(db_path, db_copy)
     incident = Incident(id=incident_id, domain=adapter.domain, case_id=case_id,
                         identity=identity, resolved_flags=resolved,
-                        baseline_snapshot=baseline_snapshot, release_snapshot=release_snapshot,
+                        baseline_snapshot=snapshot_ref(baseline_snapshot),
+                        release_snapshot=snapshot_ref(release_snapshot),
                         db_snapshot=str(db_copy), trace=trace, created_at=datetime.now(UTC))
     (out_dir / f"{incident_id}.json").write_text(incident.model_dump_json(indent=2),
                                                  encoding="utf-8")
@@ -111,6 +119,7 @@ def main(argv: list[str] | None = None,
     p.add_argument("--case", default="hero")
     p.add_argument("--baseline-snapshot", required=True)
     p.add_argument("--release-snapshot", required=True)
+    p.add_argument("--name", help="incident name, e.g. the bench case opspilot-eval-1")
     args = p.parse_args(argv)
     adapter = get_adapter(args.domain)
     key = os.environ.get(SERVER_KEY_VARS[adapter.domain], "")
@@ -119,7 +128,8 @@ def main(argv: list[str] | None = None,
         return 2
     incident, trace, defaulted = run_live(adapter, args.case, client_factory(key),
                                           baseline_snapshot=args.baseline_snapshot,
-                                          release_snapshot=args.release_snapshot)
+                                          release_snapshot=args.release_snapshot,
+                                          name=args.name)
     print(f"resolved flags: {trace.flags.values}")
     if defaulted:
         print(f"WARNING: served by the default handler (Flagsmith unreachable?): {defaulted}")

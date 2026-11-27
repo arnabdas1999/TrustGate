@@ -24,7 +24,7 @@ from typing import Any, Protocol
 
 from contracts.models import Domain, FlagConfig, GradeResult, Identity, Trace
 from sandbox import llm
-from sandbox.flags import effective_values
+from sandbox.flags import HARMLESS, effective_values
 
 
 class TargetAppAdapter(Protocol):
@@ -131,7 +131,13 @@ class SqliteDomain:
         path = self.root / "prompts" / f"{settings.prompt_version}.md"
         if not path.exists():
             raise KeyError(f"no prompt {settings.prompt_version!r} for {self.domain}")
-        return path.read_text(encoding="utf-8")
+        prompt = path.read_text(encoding="utf-8")
+        shown = {k: v for k, v in settings.values.items() if k in HARMLESS}
+        if shown:  # scaling-test flags: read by the agent, formatting only
+            settings_line = ", ".join(f"{k}={v}" for k, v in sorted(shown.items()))
+            prompt += ("\nFormatting settings (cosmetic, they don't change your rules): "
+                       f"{settings_line}\n")
+        return prompt
 
     def user_message(self, case: dict[str, Any], settings: AgentSettings) -> str:
         raise NotImplementedError

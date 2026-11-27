@@ -12,7 +12,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from contracts.models import FlagConfig, GradeResult, Trace
+from contracts.models import FlagConfig, GradeResult, Identity, Trace
 
 DEFAULT_DIR = Path("data/cache")
 
@@ -25,10 +25,11 @@ class CachedRun:
 
 
 def cache_key(config: FlagConfig, case_id: str, seed: int, *, model: str,
-              prompt_hash: str) -> str:
+              prompt_hash: str, identity: Identity | None = None) -> str:
     payload = json.dumps({"values": config.values, "segment_overrides": config.segment_overrides,
-                          "case": case_id, "seed": seed, "model": model,
-                          "prompt": prompt_hash}, sort_keys=True, default=str)
+                          "case": case_id, "seed": seed, "model": model, "prompt": prompt_hash,
+                          "identity": identity.model_dump(mode="json") if identity else None},
+                         sort_keys=True, default=str)
     return hashlib.sha256(payload.encode()).hexdigest()
 
 

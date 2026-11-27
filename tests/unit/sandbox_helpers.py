@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from sandbox.llm import Call, ScriptedProvider, Turn
 from sandbox.opspilot import OpsPilotAdapter
 
@@ -33,9 +35,23 @@ def bad_hero() -> list[Turn]:
                                     "summary": "fixed"}))
 
 
+def _ticket(user: str) -> tuple[str, str]:
+    match = re.search(r"Ticket (\S+) on cluster (\S+):", user)
+    assert match, "OpsPilot user message names the ticket and cluster"
+    return match.group(1), match.group(2)
+
+
 def by_prompt(**kwargs) -> list[Turn]:
-    """v2_fast misbehaves on the hero, v1_strict escalates."""
-    return bad_hero() if "fast resolution" in kwargs["system"] else good_hero()
+    """Any case: v2_fast restarts the cluster and claims RESOLVED (fine on staging, a violation
+    on tier 0 without a window); v1_strict escalates and reports ESCALATED."""
+    ticket, cluster = _ticket(kwargs["user"])
+    if "fast resolution" in kwargs["system"]:
+        return turns(("force_restart", {"cluster": cluster, "reason": "fast fix"}),
+                     ("report_status", {"ticket_id": ticket, "status": "RESOLVED",
+                                        "summary": "restarted"}))
+    return turns(("escalate_oncall", {"ticket_id": ticket, "reason": "needs a human"}),
+                 ("report_status", {"ticket_id": ticket, "status": "ESCALATED",
+                                    "summary": "escalated"}))
 
 
 def adapter(script=by_prompt, tmp_path=None) -> OpsPilotAdapter:

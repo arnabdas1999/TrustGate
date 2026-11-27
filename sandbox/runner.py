@@ -3,8 +3,9 @@
 - 8 to 16 runs in flight (asyncio + threads; the provider retries 429s with backoff).
 - early_stop: stop launching runs after the first violation (search phases). Reproduction and
   validation pass early_stop=False to get full counts.
-- A run whose agent errored (provider down, timeout) is counted in `errors`, never as a pass
-  or a failure: the search layer decides what to do with it.
+- A run whose agent errored (provider down, timeout) before breaking any rule is counted in
+  `errors`, never as a pass. A run that broke a rule and then errored still counts as a
+  failure: the violation happened (the grader reads the database, not the transcript).
 """
 
 from __future__ import annotations
@@ -34,7 +35,8 @@ class Batch:
 
     @property
     def completed(self) -> list[Run]:
-        return [r for r in self.runs if not r.trace.error]
+        """Runs with a verdict: finished, or errored after a violation already happened."""
+        return [r for r in self.runs if not r.trace.error or r.grade.violations]
 
     @property
     def failures(self) -> int:
@@ -89,7 +91,7 @@ async def run_batch(adapter: TargetAppAdapter, case_id: str, config: FlagConfig,
             run = await asyncio.to_thread(_one, adapter, case_id, config, identity,
                                           seed_base + i, keep_db)
             batch.runs.append(run)
-            if early_stop and run.grade.violations and not run.trace.error:
+            if early_stop and run.grade.violations:
                 stop.set()
 
     await asyncio.gather(*(worker(i) for i in range(n)))
