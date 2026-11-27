@@ -1,5 +1,9 @@
-import type { Metadata } from "next";
-import Link from "next/link";
+import type { Metadata, Viewport } from "next";
+import "@fontsource/geist-sans/400.css";
+import "@fontsource/geist-sans/500.css";
+import "@fontsource/geist-sans/600.css";
+import "@fontsource/geist-mono/400.css";
+import "@fontsource/geist-mono/500.css";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -7,18 +11,18 @@ export const metadata: Metadata = {
   description: "Find the Flagsmith flag change that broke your AI agent, and repair it with approval.",
 };
 
-// System fonts only: no build-time font download, so offline and Docker builds stay reliable.
+export const viewport: Viewport = {
+  themeColor: "#0e1a2d",
+  colorScheme: "dark",
+};
+
+// Fonts are self-hosted from npm (@fontsource), so builds never fetch from Google: offline and
+// Docker builds stay reliable. Each page draws its own heads-up display over its 3D scene.
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en">
       <body>
-        <nav className="topbar">
-          <Link href="/" className="brand">
-            TrustGate
-          </Link>
-          <span className="muted small">Approval-gated repairs for Flagsmith-controlled AI agents</span>
-        </nav>
-        <main className="container">{children}</main>
+        <main>{children}</main>
       </body>
     </html>
   );

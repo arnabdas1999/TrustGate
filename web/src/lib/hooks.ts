@@ -131,3 +131,34 @@ export function useApproverSession() {
 
   return { session, login, logout };
 }
+
+function subscribeReducedMotion(onChange: () => void) {
+  const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+/** True when the visitor asked for reduced motion (false during server rendering). */
+export function useReducedMotion(): boolean {
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+    () => false,
+  );
+}
+
+function subscribeClock(onChange: () => void) {
+  const timer = setInterval(onChange, 1000);
+  return () => clearInterval(timer);
+}
+
+/** The current time, ticking once a second, for countdowns. */
+export function useNow(): number {
+  return useSyncExternalStore(subscribeClock, () => Math.floor(Date.now() / 1000) * 1000, () => 0);
+}
+
+/** True when the API serves fixture data (MOCK=1): every number on screen is demo data then. */
+export function useDemoMode(): boolean {
+  const { data } = usePolling(api.health, 30000);
+  return data?.mock === true;
+}
