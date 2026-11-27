@@ -171,6 +171,10 @@ class TestResult(BaseModel):
     outcome: TestOutcome
     trace_ids: list[str] = Field(default_factory=list)
     fresh: bool = True  # False only for cached results shown for display
+    # Distinct behaviours among the runs (tool calls with arguments + reported status), filled by
+    # the search. 1 means every run was identical (temperature 0): one observation repeated, so the
+    # evidence line must not quote the rule of three. None when not counted.
+    distinct_behaviours: int | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> TestResult:
@@ -180,6 +184,8 @@ class TestResult(BaseModel):
             raise ValueError("a FAIL needs at least one observed violation")
         if self.outcome == TestOutcome.PASS and self.failures > 0:
             raise ValueError("a PASS cannot contain violations")
+        if self.distinct_behaviours is not None and not 0 <= self.distinct_behaviours <= self.runs:
+            raise ValueError("distinct_behaviours must be between 0 and runs")
         return self
 
 

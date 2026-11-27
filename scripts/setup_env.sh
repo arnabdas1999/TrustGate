@@ -67,6 +67,16 @@ read_secret org_key "Flagsmith ORGANISATION API key"
 read_secret ops_key "OpsPilot Prod server-side key (ser.)"
 read_secret vg_key "VaultGuard Prod server-side key (ser., Enter to skip)" optional
 
+# Benchmark environments (one per runner). Optional: Enter skips one. Plain arrays: macOS
+# ships bash 3.2, which has no associative arrays.
+bench_names=("bench-1" "bench-2" "bench-3")
+bench_ids=("121201" "121202" "121203")
+bench_keys=("" "" "")
+for i in 0 1 2; do
+  read_secret bench_key "${bench_names[$i]} server-side key (ser., Enter to skip)" optional
+  bench_keys[$i]="$bench_key"
+done
+
 # LLM: ollama (local, free; the main engine), groq (free tier, backup) or gemini.
 read_plain llm_provider "LLM provider: ollama, groq or gemini" "ollama"
 llm_provider="$(printf '%s' "$llm_provider" | tr '[:upper:]' '[:lower:]')"
@@ -79,7 +89,7 @@ case "$llm_provider" in
     else llm_base="http://host.docker.internal:11434"; fi
     read_plain llm_base "Ollama URL" "$llm_base"
     echo "  Use model names exactly as 'ollama list' shows them."
-    read_plain model_cheap "Ollama model for model_cheap" "llama3.2:3b"
+    read_plain model_cheap "Ollama model for model_cheap" "qwen3:8b"
     read_plain model_flagship "Ollama model for model_flagship" "qwen3:14b"
     read_plain parallel "Parallel replays (1 unless OLLAMA_NUM_PARALLEL is raised)" "1"
     ;;
@@ -121,10 +131,20 @@ vg_suffix="$(env_suffix "$vg_env")"
   if [[ -n $vg_key ]]; then echo "FLAGSMITH_SERVER_KEY_$vg_suffix=$vg_key"; fi
   if [[ -n $llm_base ]]; then echo "LLM_BASE_URL=$llm_base"; fi
   if [[ -n $llm_key ]]; then echo "LLM_API_KEY=$llm_key"; fi
+  for i in 0 1 2; do
+    if [[ -n ${bench_keys[$i]} ]]; then
+      echo "FLAGSMITH_SERVER_KEY_$(env_suffix "${bench_names[$i]}")=${bench_keys[$i]}"
+    fi
+  done
 } > "$env_path"
 
 environments="$ops_env:$ops_env_id"
 if [[ -n $vg_key ]]; then environments="$environments,$vg_env:$vg_env_id"; fi
+for i in 0 1 2; do
+  if [[ -n ${bench_keys[$i]} ]]; then
+    environments="$environments,${bench_names[$i]}:${bench_ids[$i]}"
+  fi
+done
 {
   echo "# Written by scripts/setup_env.sh. Never commit this file. Only the gate reads it."
   echo "FLAGSMITH_API_KEY=$org_key"
@@ -138,6 +158,11 @@ if [[ -n $vg_key ]]; then environments="$environments,$vg_env:$vg_env_id"; fi
   echo "FLAGSMITH_PROJECT_ID=$project_id"
   echo "FLAGSMITH_SERVER_KEY=$ops_key"
   if [[ -n $vg_key ]]; then echo "GATE_SERVER_KEY_$vg_suffix=$vg_key"; fi
+  for i in 0 1 2; do
+    if [[ -n ${bench_keys[$i]} ]]; then
+      echo "GATE_SERVER_KEY_$(env_suffix "${bench_names[$i]}")=${bench_keys[$i]}"
+    fi
+  done
 } > "$gate_path"
 
 echo

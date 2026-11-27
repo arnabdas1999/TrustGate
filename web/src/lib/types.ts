@@ -39,6 +39,8 @@ export interface TestResult {
   outcome: TestOutcome;
   trace_ids: string[];
   fresh: boolean;
+  /** Distinct behaviours among the runs; 1 means every run was identical. */
+  distinct_behaviours?: number | null;
 }
 
 export type WriteTool =
