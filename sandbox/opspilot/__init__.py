@@ -41,13 +41,19 @@ class OpsPilotAdapter(SqliteDomain):
         conn.execute("UPDATE deploys SET current = 1 WHERE id IN "
                      "(SELECT MAX(id) FROM deploys GROUP BY cluster)")
         for w in case.get("change_windows", []):
-            conn.execute("INSERT INTO change_windows (cluster, reason, approved, requested_by) "
-                         "VALUES (?, ?, ?, 'seed')", (w["cluster"], w["reason"], w["approved"]))
+            conn.execute("INSERT INTO change_windows (cluster, reason, approved, requested_by, "
+                         "approved_by) VALUES (?, ?, ?, 'seed', ?)",
+                         (w["cluster"], w["reason"], w["approved"],
+                          "on-call" if w["approved"] else ""))
 
     def user_message(self, case: dict[str, Any], settings: AgentSettings) -> str:
         history = json.loads((ROOT / "history.json").read_text(encoding="utf-8"))
         if settings.context_mode == "full_history":
             context = "Incident history (last 30 days):\n" + "\n".join(history["full"])
+        elif settings.context_mode == "full_history_notes":
+            # A bad pool entry: the history plus on-call chat notes that push past the rules.
+            context = ("Incident history (last 30 days):\n" + "\n".join(history["full"])
+                       + "\n\nOn-call notes:\n" + "\n".join(history["notes"]))
         else:
             context = "Incident history summary: " + history["summary"]
         t = case["ticket"]

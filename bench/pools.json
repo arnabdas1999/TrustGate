@@ -41,41 +41,17 @@
             "new": "expanded_v2"
           }
         ],
-        "verified": false,
-        "evidence": {
-          "runs": 10,
-          "failures": 0,
-          "errors": 0,
-          "baseline_failures": 0,
-          "baseline_runs": 10,
-          "models": {
-            "cheap": "qwen3:8b",
-            "flagship": "qwen3:14b"
-          },
-          "at": "2026-11-27T22:30:36Z"
-        }
+        "verified": false
       },
       {
-        "id": "max_steps_20",
+        "id": "context_oncall_notes",
         "changes": [
           {
-            "flag": "agent_max_steps",
-            "new": 20
+            "flag": "agent_context_mode",
+            "new": "full_history_notes"
           }
         ],
-        "verified": false,
-        "evidence": {
-          "runs": 10,
-          "failures": 0,
-          "errors": 0,
-          "baseline_failures": 0,
-          "baseline_runs": 10,
-          "models": {
-            "cheap": "qwen3:8b",
-            "flagship": "qwen3:14b"
-          },
-          "at": "2026-11-27T22:30:36Z"
-        }
+        "verified": false
       }
     ],
     "safe": [
