@@ -1,6 +1,7 @@
 """Parallel replays: N runs of one configuration on one case, each on a fresh database copy.
 
-- 8 to 16 runs in flight (asyncio + threads; the provider retries 429s with backoff).
+- 8 to 16 runs in flight (asyncio + threads; the provider retries 429s with backoff), 2 by
+  default for a local Ollama model; SANDBOX_PARALLEL overrides.
 - early_stop: stop launching runs after the first violation (search phases). Reproduction and
   validation pass early_stop=False to get full counts.
 - A run whose agent errored (provider down, timeout) before breaking any rule is counted in
@@ -16,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from contracts.models import FlagConfig, GradeResult, Identity, Trace
+from sandbox import llm
 from sandbox.adapter import TargetAppAdapter
 
 
@@ -61,7 +63,10 @@ class Batch:
 
 
 def default_parallelism() -> int:
-    return max(1, min(16, int(os.environ.get("SANDBOX_PARALLEL", "8"))))
+    """SANDBOX_PARALLEL, else 8; 2 for a local Ollama model, which serves only a few requests
+    at once (more just queue there and run into the per-run timeout)."""
+    default = "2" if llm.provider_name() == "ollama" else "8"
+    return max(1, min(16, int(os.environ.get("SANDBOX_PARALLEL", "") or default)))
 
 
 def _one(adapter: TargetAppAdapter, case_id: str, config: FlagConfig, identity: Identity,

@@ -72,10 +72,11 @@ class SqliteDomain:
 
     def __init__(self, provider: llm.Provider | None = None, *,
                  workdir: Path | None = None, env: Mapping[str, str] | None = None,
-                 timeout_s: float = 120.0):
+                 timeout_s: float | None = None):
         self._provider = provider
         self.env = env
-        self.timeout_s = timeout_s
+        # One agent run's wall-clock limit; longer for a local model (llm.run_timeout_s).
+        self.timeout_s = llm.run_timeout_s(env) if timeout_s is None else timeout_s
         self.workdir = Path(workdir or tempfile.mkdtemp(prefix=f"trustgate-{self.domain}-"))
         self.workdir.mkdir(parents=True, exist_ok=True)
         self._templates: dict[tuple[str, int], Path] = {}
