@@ -1,5 +1,4 @@
-import { OutcomeBadge } from "./StatusBadge";
-import type { FlagChange, TestResult } from "@/lib/types";
+import type { FlagChange, TestOutcome, TestResult } from "@/lib/types";
 
 const PHASE_LABEL: Record<TestResult["phase"], string> = {
   reproduce: "Reproduce",
@@ -8,6 +7,12 @@ const PHASE_LABEL: Record<TestResult["phase"], string> = {
   confirm: "Confirm",
   validate: "Validate repair",
   post_write: "After write",
+};
+
+const OUTCOME_LABEL: Record<TestOutcome, string> = {
+  PASS: "Pass",
+  FAIL: "Fail",
+  INCONCLUSIVE: "Inconclusive",
 };
 
 /** One row per tested configuration; a dot marks each release change that row applied. */
@@ -27,24 +32,20 @@ export function SearchMatrix({
   const exhaustive = 2 ** suspects.length * 3;
 
   return (
-    <div>
+    <>
       <div className="table-wrap">
         <table className="matrix">
           <thead>
             <tr>
-              <th scope="col">Phase</th>
+              <th scope="col">Step</th>
               {suspects.map((s) => (
-                <th
-                  key={s.flag}
-                  scope="col"
-                  className={`flag-col${culpritFlags.has(s.flag) ? " culprit" : ""}`}
-                >
-                  <code>{s.flag}</code>
+                <th key={s.flag} scope="col" className={`flag-col${culpritFlags.has(s.flag) ? " culprit" : ""}`}>
+                  <code>{s.flag.replace(/^agent_/, "")}</code>
                   {culpritFlags.has(s.flag) && <span className="sr-only"> (culprit)</span>}
                 </th>
               ))}
               <th scope="col">Runs</th>
-              <th scope="col">Failures</th>
+              <th scope="col">Failed</th>
               <th scope="col">Result</th>
             </tr>
           </thead>
@@ -54,9 +55,9 @@ export function SearchMatrix({
               const override = Object.keys(step.config.segment_overrides).length > 0;
               return (
                 <tr key={i}>
-                  <td className="phase">
+                  <td>
                     {PHASE_LABEL[step.phase]}
-                    {override && <span className="phase-note">+ segment override</span>}
+                    {override && <span className="phase-note">with segment override</span>}
                     {!step.fresh && <span className="phase-note">cached</span>}
                   </td>
                   {suspects.map((s) => (
@@ -71,9 +72,7 @@ export function SearchMatrix({
                   ))}
                   <td className="num">{step.runs}</td>
                   <td className="num">{step.failures}</td>
-                  <td>
-                    <OutcomeBadge outcome={step.outcome} />
-                  </td>
+                  <td className={`outcome outcome-${step.outcome}`}>{OUTCOME_LABEL[step.outcome]}</td>
                 </tr>
               );
             })}
@@ -81,12 +80,11 @@ export function SearchMatrix({
         </table>
       </div>
       {suspects.length > 0 && (
-        <p className="muted small" style={{ margin: "16px 0 0" }}>
-          <span className="num">{searchRuns}</span> search runs so far. Trying every combination
-          would take <span className="num">{2 ** suspects.length}</span> configurations × 3 ={" "}
-          <span className="num">{exhaustive}</span> runs.
+        <p className="footnote">
+          {searchRuns} search runs so far. Trying every combination would take {2 ** suspects.length}{" "}
+          configurations × 3 = {exhaustive} runs.
         </p>
       )}
-    </div>
+    </>
   );
 }

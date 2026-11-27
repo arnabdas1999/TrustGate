@@ -1,125 +1,109 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { formatClock } from "@/lib/format";
-import { usePolling } from "@/lib/hooks";
-import type { Investigation, InvestigationStatus } from "@/lib/types";
+import { STATUS_LABEL, formatClock } from "@/lib/format";
+import { usePolling, useReducedMotion } from "@/lib/hooks";
+import type { Investigation } from "@/lib/types";
+import type { HangarItem } from "./arena/Hangar";
+import type { Mood } from "./arena/Robot";
 import { Icon } from "./Icon";
-import { StatusBadge } from "./StatusBadge";
+import { STATUS_TONE, StatusBadge } from "./StatusBadge";
 
-const IN_PROGRESS = new Set<InvestigationStatus>([
-  "capturing",
-  "reproducing",
-  "searching",
-  "validating",
-  "approved",
-  "applied",
-]);
-const PROBLEM = new Set<InvestigationStatus>(["failed", "stale", "expired", "inconclusive", "not_reproducible"]);
+const Hangar = dynamic(() => import("./arena/Hangar"), {
+  ssr: false,
+  loading: () => <div className="arena arena-loading" aria-hidden />,
+});
 
-function Kpis({ data }: { data: Investigation[] }) {
-  const count = (pred: (s: InvestigationStatus) => boolean) => data.filter((i) => pred(i.status)).length;
-  const items = [
-    { label: "Needs approval", value: count((s) => s === "proposed"), tone: "warn", icon: "alert" as const },
-    { label: "In progress", value: count((s) => IN_PROGRESS.has(s)), tone: "", icon: "search" as const },
-    { label: "Verified", value: count((s) => s === "verified"), tone: "good", icon: "check" as const },
-    { label: "Needs a look", value: count((s) => PROBLEM.has(s)), tone: "bad", icon: "x" as const },
-  ];
-  return (
-    <div className="kpis">
-      {items.map((k) => (
-        <div key={k.label} className={`kpi${k.value > 0 && k.tone ? ` kpi-${k.tone}` : ""}`}>
-          <div className="kpi-label">
-            <Icon name={k.icon} size={14} />
-            {k.label}
-          </div>
-          <div className="kpi-value">{k.value}</div>
-        </div>
-      ))}
-    </div>
-  );
+const TEAM = { opspilot: "#f59e0b", vaultguard: "#14b8a6" } as const;
+const AGENT = { opspilot: "OpsPilot", vaultguard: "VaultGuard" } as const;
+
+function mood(inv: Investigation): Mood {
+  if (["capturing", "reproducing", "searching", "validating"].includes(inv.status)) return "search";
+  if (inv.status === "proposed") return "alert";
+  if (inv.status === "verified") return "happy";
+  if (["failed", "stale", "inconclusive", "not_reproducible"].includes(inv.status)) return "sad";
+  return "idle";
+}
+
+function summary(inv: Investigation): string {
+  const culprit = inv.culprit_set.map((c) => c.flag).join(" + ");
+  if (culprit) return `${culprit} · segment ${inv.segment ?? "—"}`;
+  return `${inv.runs_used} of ${inv.budget_runs} runs · ${inv.suspects.length} flags changed`;
 }
 
 export function InvestigationList() {
   const { data, error } = usePolling(api.investigations, 2000);
   const router = useRouter();
+  const reduced = useReducedMotion();
 
-  if (!data) {
-    return (
-      <section className="card">
-        {error ? (
-          <p className="error">Could not reach the API: {error}</p>
-        ) : (
-          <div aria-busy="true" aria-label="Loading investigations" style={{ display: "grid", gap: 12 }}>
-            <div className="skeleton" style={{ width: "60%" }} />
-            <div className="skeleton" />
-            <div className="skeleton" style={{ width: "80%" }} />
-          </div>
-        )}
-      </section>
-    );
-  }
+  const items: HangarItem[] = (data ?? []).slice(0, 4).map((inv) => ({
+    id: inv.id,
+    team: TEAM[inv.domain],
+    agent: AGENT[inv.domain],
+    status: STATUS_LABEL[inv.status],
+    tone: STATUS_TONE[inv.status],
+    mood: mood(inv),
+  }));
 
   return (
-    <>
-      <Kpis data={data} />
-      <section className="card card-flush">
-        {data.length === 0 ? (
-          <div className="empty">
-            <Icon name="shield" size={28} />
-            <strong>No investigations yet</strong>
-            <span className="small">They appear here when an agent alert starts one.</span>
-          </div>
+    <div className="hangar-page">
+      <div className="hangar-stage">
+        <Hangar items={items} onOpen={(id) => router.push(`/investigations/${id}`)} motion={!reduced} />
+        <nav className="hangar-top" aria-label="TrustGate">
+          <Link href="/" className="brand">
+            <span className="brand-mark">
+              <Icon name="shield" size={15} />
+            </span>
+            TrustGate
+          </Link>
+          <span className="chip">Approval-gated repairs for Flagsmith-controlled AI agents</span>
+        </nav>
+        <div className="hangar-copy">
+          <h1>When an AI agent breaks after a flag release</h1>
+          <p>
+            TrustGate replays it in a sandbox, finds the one flag change that caused it, and changes
+            nothing in Flagsmith until you approve the fix. Pick an agent to see its incident.
+          </p>
+        </div>
+      </div>
+
+      <section className="list" aria-label="Incidents">
+        <h2>Incidents</h2>
+        {!data ? (
+          error ? (
+            <p className="error">Could not reach the API: {error}</p>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }} aria-busy="true" aria-label="Loading incidents">
+              <div className="skeleton" />
+              <div className="skeleton" />
+            </div>
+          )
+        ) : data.length === 0 ? (
+          <p className="muted">No incidents yet. They appear here when an agent alert starts one.</p>
         ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Agent</th>
-                  <th scope="col">Investigation</th>
-                  <th scope="col">Status</th>
-                  <th scope="col">Segment</th>
-                  <th scope="col">Alert</th>
-                  <th scope="col">Runs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.map((inv) => {
-                  const href = `/investigations/${inv.id}`;
-                  const opspilot = inv.domain === "opspilot";
-                  return (
-                    <tr key={inv.id} className="row-link" onClick={() => router.push(href)}>
-                      <td>
-                        <span className="agent">
-                          <span className="agent-mark">
-                            <Icon name={opspilot ? "bot" : "vault"} size={14} />
-                          </span>
-                          {opspilot ? "OpsPilot" : "VaultGuard"}
-                        </span>
-                      </td>
-                      <td>
-                        <Link href={href} className="inv-id" onClick={(e) => e.stopPropagation()}>
-                          {inv.id}
-                        </Link>
-                      </td>
-                      <td>
-                        <StatusBadge status={inv.status} />
-                      </td>
-                      <td>{inv.segment ? <code>{inv.segment}</code> : <span className="muted">—</span>}</td>
-                      <td className="num">{formatClock(inv.timestamps.alert)}</td>
-                      <td className="num">
-                        {inv.runs_used} <span className="muted">/ {inv.budget_runs}</span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ul className="rows">
+            {data.map((inv) => (
+              <li key={inv.id}>
+                <Link href={`/investigations/${inv.id}`} style={{ "--team": TEAM[inv.domain] } as React.CSSProperties}>
+                  <span className="row-mark" aria-hidden />
+                  <span>
+                    <span className="row-title">{AGENT[inv.domain]}</span>
+                    <span className="row-sub">
+                      {" "}
+                      · {summary(inv)}
+                    </span>
+                  </span>
+                  <StatusBadge status={inv.status} />
+                  <span className="row-time">{formatClock(inv.timestamps.alert)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
-    </>
+    </div>
   );
 }
