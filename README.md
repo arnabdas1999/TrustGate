@@ -338,6 +338,11 @@ safety.
 need more than the plan's 160). A batch is priced at the measured cost per run before it starts.
 Budget gone means INCONCLUSIVE, never PASS.
 
+**Adaptive stop** (opt-in, `SEARCH_ADAPTIVE=1`). In reproduce, confirm, validate and after
+the write, TrustGate first runs 3. If all 3 behaved identically, it stops there and reports
+one behaviour observed; if they differ, it tops up to the full count above. Runs are always
+fresh. On the scripted OpsPilot case this cuts an investigation from 104 replays to 66.
+
 **Scaling.** `python -m search.scaling` measures search runs for releases of 5, 10 and 20 changes
 (the 5 real ones plus harmless flags the agents read), in plain or guided order. Trying every
 combination would take 2^N configurations × 3 runs: 96, 3,072 and 3,145,728.
