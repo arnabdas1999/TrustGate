@@ -284,7 +284,7 @@ CULPRITS = [PROMPT, TOOLS]
 def _op(tool="update_feature_state", feature="agent_tool_policy", value="restricted",
         segment=None, **kw):
     return WriteOp(tool=tool, project=kw.pop("project", "anything"),
-                   environment=kw.pop("environment", "Demo Production"), feature=feature,
+                   environment=kw.pop("environment", "OpsPilot Prod"), feature=feature,
                    value=value, segment=segment, **kw)
 
 
