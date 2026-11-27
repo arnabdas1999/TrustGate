@@ -14,6 +14,7 @@ Flagsmith is never touched, and the model under test is never swapped.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from itertools import count
@@ -90,16 +91,20 @@ class SandboxSearch:
     def __init__(self, oracle_factory: Callable[[Incident], Oracle] | None = None, *,
                  heldout_cases: Callable[[Incident], list[str]] | None = None,
                  max_runs: int = MAX_RUNS, max_usd: float = 5.0, stop_at_first: bool = True,
-                 validate_repairs: bool = True):
+                 validate_repairs: bool = True, adaptive: bool | None = None):
         self.oracle_factory = oracle_factory or _sandbox_oracle
         self.heldout_cases = heldout_cases or _sandbox_heldout
         self.max_runs, self.max_usd, self.stop_at_first = max_runs, max_usd, stop_at_first
         self.validate_repairs = validate_repairs
+        # opt-in: SEARCH_ADAPTIVE=1 stops a phase after 3 identical runs (search/testing.py)
+        self.adaptive = adaptive if adaptive is not None else \
+            os.environ.get("SEARCH_ADAPTIVE", "").strip().lower() in ("1", "true", "yes")
 
     def run(self, incident: Incident, suspects: Sequence[FlagChange],
             mode: InvestigationMode) -> SearchResult:
         suspects = list(suspects)  # guided order comes from the caller; plain is diff order
-        tester = Tester(self.oracle_factory(incident), Budget(self.max_runs, self.max_usd))
+        tester = Tester(self.oracle_factory(incident), Budget(self.max_runs, self.max_usd),
+                        adaptive=self.adaptive)
         captured = dict(incident.resolved_flags.values)
 
         found_at: list[datetime] = []

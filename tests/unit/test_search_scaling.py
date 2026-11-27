@@ -43,3 +43,17 @@ def test_agents_read_harmless_flags(tmp_path):
     assert f"{flag}={HARMLESS[flag][1]}" in ops.provider.opened[-1]["system"]
     ops.run_agent("hero", baseline_config(), ops.identity("hero"), ops.reset_state("hero"))
     assert "Formatting settings" not in ops.provider.opened[-1]["system"]
+
+
+def test_guided_mode_uses_the_investigators_ranking():
+    from agent.llm import FakeLLM
+
+    env = {"MODEL_CHEAP": "m", "MODEL_FLAGSHIP": "f"}
+    culprit_first = FakeLLM(['["agent_prompt_version", "agent_model"]'])
+    guided = measure("opspilot", 10, mode="guided", llm=culprit_first, env=env)
+    plain = measure("opspilot", 10)
+    assert guided["order_source"] == "llm" and plain["order_source"] == "diff"
+    assert guided["culprit"] == plain["culprit"] == ["agent_prompt_version"]
+    assert guided["search_configs"] <= plain["search_configs"]
+    broken = measure("opspilot", 5, mode="guided", llm=FakeLLM(["no idea"]), env=env)
+    assert broken["order_source"] == "diff"  # falls back, and the table says so
