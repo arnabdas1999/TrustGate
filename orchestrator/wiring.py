@@ -12,8 +12,10 @@ Environment (API container, .env):
   single TRUSTGATE_ENVIRONMENT, when set, is the fallback for both
 - FLAGSMITH_SERVER_KEY_<ENV>: a ser. key per environment, for the verifier's read-back
 - TRUSTGATE_SEARCH: "scripted:<flag>,..." for the plumbing demo until search/ lands
-- LLM_PROVIDER (ollama, groq, gemini or openai), LLM_BASE_URL, LLM_API_KEY (not needed for
-  ollama), MODEL_CHEAP (investigator's model); see agent/llm.py. LLM_LIVE=0 to switch
+- LLM_PROVIDER: ollama (OLLAMA_URL or LLM_BASE_URL, default http://localhost:11434; under
+  docker compose http://host.docker.internal:11434; no key), groq or gemini (LLM_API_KEY), or
+  openai (LLM_BASE_URL); see agent/llm.py. MODEL_CHEAP is the investigator's model (e.g.
+  llama3.2:3b on Ollama). LLM_LIVE=0 switches
   the LLM off (diff order and template explanations)
 """
 

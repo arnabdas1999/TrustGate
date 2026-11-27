@@ -102,6 +102,9 @@ class GeminiLLM:
                           int(usage.get("candidatesTokenCount", 0)), model)
 
 
+# Ollama models that think before answering; think=false keeps the whole budget for the answer.
+THINKING_MODELS = ("qwen3", "deepseek-r1")
+
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 # LLM_PROVIDER -> default LLM_BASE_URL for the OpenAI-compatible providers.
@@ -153,15 +156,16 @@ class OpenAICompatLLM:
 
 
 class OllamaLLM:
-    """Ollama's native POST {base}/api/chat with think=false (qwen3 otherwise spends the token
-    budget reasoning). The team tested this path on the Mac. No key."""
+    """Ollama's native POST {base}/api/chat, stream=false, num_predict=max_tokens, temperature 0.
+    Thinking models (THINKING_MODELS, e.g. qwen3) get think=false so the answer isn't spent on
+    thoughts; other models aren't sent the setting. No key."""
 
     def __init__(self, base_url: str = "http://localhost:11434", *,
                  client: httpx.Client | None = None, timeout: float = 120.0,
                  think: bool = False):
         base = base_url.rstrip("/")
         base = base[:-3] if base.endswith("/v1") else base
-        self.url = base + "/api/chat"
+        self.url = base
         self.think = think
         self._http = client or httpx.Client(timeout=timeout)
 
@@ -169,11 +173,13 @@ class OllamaLLM:
         return f"OllamaLLM({self.url!r})"
 
     def complete(self, prompt: str, *, model: str, max_tokens: int) -> Completion:
-        body = {"model": model, "messages": [{"role": "user", "content": prompt}],
-                "stream": False, "think": self.think,
-                "options": {"temperature": 0, "num_predict": max_tokens}}
+        body: dict[str, object] = {
+            "model": model, "messages": [{"role": "user", "content": prompt}], "stream": False,
+            "options": {"num_predict": max_tokens, "temperature": 0}}
+        if model.startswith(THINKING_MODELS):  # other models don't take the setting
+            body["think"] = self.think
         try:
-            r = self._http.post(self.url, json=body)
+            r = self._http.post(f"{self.url}/api/chat", json=body)
         except httpx.HTTPError as exc:
             raise LLMUnavailable(f"LLM unreachable: {type(exc).__name__}") from None
         if r.status_code != 200:
@@ -181,7 +187,9 @@ class OllamaLLM:
             raise LLMUnavailable(f"LLM error (HTTP {r.status_code}){hint}")
         try:
             data = r.json()
-            text = data["message"].get("content") or ""
+            text = data["message"]["content"]
+            if not isinstance(text, str):
+                raise TypeError
         except (ValueError, KeyError, TypeError, AttributeError):
             raise LLMUnavailable("LLM returned an unexpected body") from None
         return Completion(_THINK.sub("", text).strip(), int(data.get("prompt_eval_count", 0)),

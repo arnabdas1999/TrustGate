@@ -9,6 +9,7 @@ from agent.llm import (
     FakeLLM,
     GeminiLLM,
     LLMUnavailable,
+    OllamaLLM,
     llm_from_env,
     model_id,
 )
@@ -116,3 +117,79 @@ def test_a_good_answer_that_mentions_quota_is_still_an_answer():
     out = _gemini(lambda r: httpx.Response(200, json=body)).complete("p", model="m",
                                                                      max_tokens=5)
     assert out.text == "raise the quota"
+
+
+# --- Ollama (local models, no key) ------------------------------------------------------------
+
+
+def _ollama(handler, url="http://ollama:11434"):
+    return OllamaLLM(url, client=httpx.Client(transport=httpx.MockTransport(handler)))
+
+
+def test_ollama_request_shape_and_reply_parsing():
+    seen = []
+
+    def handler(request):
+        seen.append((str(request.url), json.loads(request.content), dict(request.headers)))
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": "ok"},
+                                         "prompt_eval_count": 12, "eval_count": 3})
+
+    out = _ollama(handler).complete("rank these", model="llama3.2:3b", max_tokens=200)
+    assert out == Completion(text="ok", tokens_in=12, tokens_out=3, model="llama3.2:3b")
+    url, body, headers = seen[0]
+    assert url == "http://ollama:11434/api/chat"
+    assert body["model"] == "llama3.2:3b" and body["stream"] is False
+    assert body["messages"] == [{"role": "user", "content": "rank these"}]
+    assert body["options"] == {"num_predict": 200, "temperature": 0}
+    assert "think" not in body  # llama doesn't think
+    assert "authorization" not in {k.lower() for k in headers}  # no key, ever
+
+
+def test_ollama_turns_thinking_off_for_qwen3():
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {"content": "x"}})
+
+    _ollama(handler).complete("p", model="qwen3:14b", max_tokens=5)
+    assert bodies[0]["think"] is False
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 404, 400])
+def test_ollama_http_errors_are_unavailable(status):
+    with pytest.raises(LLMUnavailable, match=f"HTTP {status}"):
+        _ollama(lambda r: httpx.Response(status, text="model 'x' not found")).complete(
+            "p", model="x", max_tokens=5)
+
+
+def test_ollama_down_is_unavailable():
+    def handler(request):
+        raise httpx.ConnectError("connection refused", request=request)
+
+    with pytest.raises(LLMUnavailable, match="unreachable: ConnectError"):
+        _ollama(handler).complete("p", model="m", max_tokens=5)
+
+
+@pytest.mark.parametrize("body", [{"message": {}}, {"done": True}, {"message": {"content": 3}}])
+def test_ollama_unexpected_bodies_are_unavailable(body):
+    with pytest.raises(LLMUnavailable, match="unexpected body"):
+        _ollama(lambda r: httpx.Response(200, json=body)).complete("p", model="m", max_tokens=5)
+
+
+def test_llm_from_env_picks_ollama_without_a_key():
+    llm = llm_from_env({"LLM_PROVIDER": "ollama"})
+    assert isinstance(llm, OllamaLLM) and llm.url == "http://localhost:11434"
+    llm = llm_from_env({"LLM_PROVIDER": " Ollama ",
+                        "OLLAMA_URL": "http://host.docker.internal:11434/"})
+    assert llm.url == "http://host.docker.internal:11434"
+    assert isinstance(llm_from_env({"LLM_PROVIDER": "ollama", "LLM_LIVE": "0"}), DisabledLLM)
+
+
+def test_ollama_quota_like_failure_falls_back_in_ordering():
+    from agent.ordering import order_suspects
+    from contracts.models import FlagChange, InvestigationMode
+    suspects = [FlagChange(flag="a", old=1, new=2), FlagChange(flag="b", old=1, new=2)]
+    llm = _ollama(lambda r: httpx.Response(503, text="busy"))
+    out = order_suspects(suspects, None, InvestigationMode.GUIDED, llm, model="llama3.2:3b")
+    assert out.source == "diff" and out.suspects == suspects and "unavailable" in out.note
