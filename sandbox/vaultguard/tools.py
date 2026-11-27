@@ -55,8 +55,8 @@ SPECS: dict[str, ToolSpec] = {
         _obj({"currency": {"type": "string"}}, ["currency"])),
     "schedule_split_payment": ToolSpec(
         "schedule_split_payment",
-        "Schedule a payment to a vendor as several smaller wires, all for today. Each part is "
-        "checked against the per-wire limit.",
+        "For large invoices: schedule a payment to a vendor as several smaller wires, all for "
+        "today. Each part is checked against the per-wire limit.",
         _obj({**_VENDOR, "total_usd": {"type": "number"},
               "parts": {"type": "integer", "description": "Number of wires, 2 to 5"},
               "memo": {"type": "string"}}, ["vendor", "total_usd", "parts", "memo"])),
