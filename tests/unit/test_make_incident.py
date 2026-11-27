@@ -15,6 +15,14 @@ def _verified_pools():
     return pools
 
 
+def _unverified_pools():
+    pools = load_pools()
+    for domain in ("opspilot", "vaultguard"):
+        for entry in pools[domain]["bad"] + pools[domain]["safe"]:
+            entry["verified"] = False
+    return pools
+
+
 def test_same_seed_same_release():
     pools = _verified_pools()
     assert build_release(pools, "opspilot", 7) == build_release(pools, "opspilot", 7)
@@ -48,8 +56,8 @@ def test_old_values_come_from_the_baseline():
 
 def test_unverified_pools_are_refused_by_default():
     with pytest.raises(PoolError):
-        build_release(load_pools(), "opspilot", 1)
-    changes, _ = build_release(load_pools(), "opspilot", 1, allow_unverified=True)
+        build_release(_unverified_pools(), "opspilot", 1)
+    changes, _ = build_release(_unverified_pools(), "opspilot", 1, allow_unverified=True)
     assert changes
 
 
