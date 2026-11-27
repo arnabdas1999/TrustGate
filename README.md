@@ -370,7 +370,7 @@ included.
 
 ### Pre-registration
 
-> **Status: DRAFT.** This section is frozen by the commit tagged `cp7-prereg`, made before the
+> **Status: FROZEN on Nov 28.** This section is frozen by the commit tagged `cp7-prereg`, made before the
 > first eval run. Nothing below changes after that commit; any later change is listed with its
 > reason under "Deviations".
 
@@ -392,8 +392,36 @@ delta debugging?
 verified change pools. Each release has 4 or 5 flag
 changes with one bad change (or bad pair) hidden among safe ones. Answer keys are salted and
 sealed; only their SHA-256 hashes are committed before the runs (`bench/keys/hashes.txt`).
-Target mix: 1 to 2 of the 6 cases are two-flag interactions. _Final seeds and the exact mix are
-filled in here at CP7._ Dev cases used for tuning are never reported.
+Dev cases used for tuning are never reported.
+
+Final cases (seeds 1, 2 and 3 per domain; hashes in `bench/keys/hashes.txt`):
+
+| Case | Flag changes | Key SHA-256 (first 12) |
+| --- | --- | --- |
+| `opspilot-eval-1` | 5 | `3b6cf67e4305` |
+| `opspilot-eval-2` | 5 | `a976841e4266` |
+| `opspilot-eval-3` | 4 | `84b266040467` |
+| `vaultguard-eval-1` | 4 | `e9bd31b9bb9f` |
+| `vaultguard-eval-2` | 5 | `8b591a8bf452` |
+| `vaultguard-eval-3` | 4 | `6e381db163c1` |
+
+Single culprit per domain, disclosed up front. Only one bad entry per domain passed
+verification (`bench/pools.json`): OpsPilot `prompt_v2_fast` (one flag) and VaultGuard
+`split_payment_pair` (a two-flag interaction). Two more OpsPilot candidates,
+`tools_expanded_v2` and `context_oncall_notes`, failed 0 of 10 runs on `qwen3:14b`, so they
+are recorded as unverified and not used. So the culprit is the same in all three cases of a
+domain; the cases differ in which safe changes surround it and in their order. The mix is
+therefore 3 single-flag cases and 3 interaction cases, not the 1 to 2 interactions first
+planned.
+
+**The manual arm is not blind.** Anyone who has read `bench/pools.json` can name each domain's
+culprit, and all three teammates have (we built and verified the pools). We had no outside
+person to run the manual arm, so teammates run it anyway, each on cases they did not
+investigate with TrustGate. The manual runner knows the culprit going in, so manual times
+measure locating, fixing and confirming a known suspect: a lower bound on a real on-call
+engineer's time, which favours the manual arm. The automated arms never read
+`bench/pools.json` and keep nothing between cases: every investigation starts from the release
+alone.
 
 **Models and settings.** The agents and the investigator run on local models through Ollama:
 `model_flagship` = `qwen3:14b`, `model_cheap` = `qwen3:8b`, `think=false`, one replay at a time

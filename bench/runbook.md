@@ -6,6 +6,9 @@ Find the change that caused it and fix it in Flagsmith. Work the way you normall
 ## Before you start (timer, not you)
 
 - You have **not** seen this case before, and you have not opened anything in `bench/keys/`.
+- You may already know each domain's bad change from building the pools (the pre-registration
+  discloses this). Still work the case from the alert: say your suspect out loud and confirm
+  it with replays before you change Flagsmith. Do not open any earlier case's result.
 - Your environment is yours alone (`bench-1`, `bench-2` or `bench-3`). Nobody else edits it.
 - The timer starts the clock when you open the alert, and records your **first suspect** the
   moment you say it out loud.
