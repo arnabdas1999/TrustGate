@@ -761,3 +761,52 @@ def test_without_a_recorded_pre_write_state_it_reads_now_then_falls_back(setup):
     original = _applied(repo)
     assert repo.get_served(original.id) is None
     assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED  # release-diff fallback
+
+
+# --- LLM card text always carries the code-written repair and evidence lines ---------------
+
+from orchestrator.lifecycle import _card_text  # noqa: E402
+
+
+def test_card_text_keeps_the_llm_first_and_appends_repair_and_evidence():
+    inv, cand = _inv([PROMPT_C, TOOLS_C]), _cand(RepairKind.SEGMENT_OVERRIDE)
+    ops = [_op("agent_tool_policy", "restricted", "high_value_wires")]
+    text = _card_text("The split tool plus the fast prompt bypass dual control", inv, cand, ops)
+    assert text.startswith("The split tool plus the fast prompt bypass dual control. "
+                           "agent_prompt_version and agent_tool_policy together reproduce "
+                           "the failure; the repair reverts agent_tool_policy on "
+                           "high_value_wires and keeps agent_prompt_version. Evidence: 0 "
+                           "failures in 20 runs, all identical")
+    assert text.endswith("not a failure-rate estimate.")
+
+
+def test_card_text_does_not_repeat_an_evidence_line_the_llm_already_quoted():
+    inv, cand = _inv([PROMPT_C], "tier0_production"), _cand(RepairKind.SEGMENT_OVERRIDE)
+    ops = [_op("agent_prompt_version", "v1_strict", "tier0_production")]
+    evidence = _evidence(cand)
+    text = _card_text(f"Reverting the prompt fixes it. {evidence}.", inv, cand, ops)
+    assert text.count(evidence) == 1
+    assert "the repair reverts agent_prompt_version on tier0_production." in text
+    assert "Evidence:" not in text
+
+
+def test_llm_explanation_on_the_proposal_carries_the_code_lines(setup):
+    repo = setup[0]
+    _guided(repo)
+    llm = FakeLLM(['["agent_prompt_version"]', "The prompt change breaks tier-0 only"])
+    _with_llm(setup, llm).run("inv_1")
+    text = repo.get_proposal(repo.get_investigation("inv_1").proposal_id).explanation
+    assert text.startswith("The prompt change breaks tier-0 only. agent_prompt_version "
+                           "changed in the release and reproduces the failure; the repair "
+                           "reverts agent_prompt_version on tier0_production. Evidence: "
+                           "0 failures in 20 runs")
+
+
+def test_template_explanation_is_unchanged_without_an_llm(setup):
+    repo, _, _, make = setup
+    make().run("inv_1")
+    text = repo.get_proposal(repo.get_investigation("inv_1").proposal_id).explanation
+    assert text.startswith("agent_prompt_version changed in the release and reproduces the "
+                           "failure; the repair reverts agent_prompt_version on "
+                           "tier0_production. Evidence: 0 failures in 20 runs")
+    assert text.count("Evidence:") == 1

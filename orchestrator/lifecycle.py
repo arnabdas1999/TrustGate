@@ -121,9 +121,9 @@ def _join(names: Sequence[str]) -> str:
     return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-def _explain(inv: Investigation, cand: RepairCandidate, ops: Sequence[WriteOp]) -> str:
-    """Plain-English summary written by code from structured results: which flags reproduce
-    the failure, which of them the repair reverts, where, and which it keeps."""
+def _repair_sentence(inv: Investigation, cand: RepairCandidate, ops: Sequence[WriteOp]) -> str:
+    """Written by code from structured results: which flags reproduce the failure, which of
+    them the repair reverts, where, and which it keeps (no final full stop)."""
     culprits = sorted(c.flag for c in inv.culprit_set)
     if len(culprits) == 1:
         cause = f"{culprits[0]} changed in the release and reproduces the failure"
@@ -139,7 +139,27 @@ def _explain(inv: Investigation, cand: RepairCandidate, ops: Sequence[WriteOp]) 
         repair = f"the repair reverts {_join(reverted)}{where}"
         if kept:
             repair += f" and keeps {_join(kept)}"
-    return f"{cause}; {repair}. Evidence: {_evidence(cand)}."
+    return f"{cause}; {repair}"
+
+
+def _explain(inv: Investigation, cand: RepairCandidate, ops: Sequence[WriteOp]) -> str:
+    """The code-written card text: which flags, what the repair reverts and keeps, evidence."""
+    return f"{_repair_sentence(inv, cand, ops)}. Evidence: {_evidence(cand)}."
+
+
+def _card_text(llm_text: str, inv: Investigation, cand: RepairCandidate,
+               ops: Sequence[WriteOp]) -> str:
+    """An LLM explanation first, then always the code-written repair sentence and the evidence
+    line (unless the LLM already quoted the evidence line verbatim), so the approver sees what
+    is reverted and how strong the evidence is whatever the model wrote."""
+    text = llm_text.strip()
+    if text and text[-1] not in ".!?":
+        text += "."
+    evidence = _evidence(cand)
+    parts = [text, f"{_repair_sentence(inv, cand, ops)}."]
+    if evidence not in text:
+        parts.append(f"Evidence: {evidence}.")
+    return " ".join(p for p in parts if p)
 
 
 class Orchestrator:
@@ -227,9 +247,11 @@ class Orchestrator:
             except ProposalError as exc:  # no segment, or not what was validated: next one
                 log.info("investigation %s: skipping %s: %s", inv.id, cand.kind, exc)
                 continue
-            text = explain(culprit_set=inv.culprit_set, segment=inv.segment, chosen=cand,
-                           options=result.candidates, llm=self.llm, model=self.llm_model,
-                           fallback=_explain(inv, cand, ops)).text
+            worded = explain(culprit_set=inv.culprit_set, segment=inv.segment, chosen=cand,
+                             options=result.candidates, llm=self.llm, model=self.llm_model,
+                             fallback=_explain(inv, cand, ops))
+            text = (_card_text(worded.text, inv, cand, ops) if worded.source == "llm"
+                    else worded.text)
             served = self._served(inv, cfg)  # the pre-write state, read just before registering
             proposal, calls = build_proposal(inv.id, cand, ops, self.gate,
                                              environment=cfg.environment, explanation=text,
