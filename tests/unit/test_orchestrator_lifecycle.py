@@ -577,3 +577,84 @@ def test_proposal_explanation_carries_the_honest_wording(setup):
     proposal = repo.get_proposal(repo.get_investigation("inv_1").proposal_id)
     assert "all identical (the agent runs at temperature 0)" in proposal.explanation
     assert "95% confidence" not in proposal.explanation
+
+
+# --- explanation names which culprit flags the repair reverts ---------------------------------
+
+from contracts.models import FlagChange, WriteOp  # noqa: E402
+from orchestrator.lifecycle import _explain, _join  # noqa: E402
+
+PROMPT_C = FlagChange(flag="agent_prompt_version", old="v1_strict", new="v2_fast")
+TOOLS_C = FlagChange(flag="agent_tool_policy", old="restricted", new="expanded")
+
+
+def _inv(culprits, segment="high_value_wires"):
+    return Investigation(id="i", incident_id="inc", domain=Domain.VAULTGUARD,
+                         status=InvestigationStatus.VALIDATING, segment=segment,
+                         culprit_set=culprits, timestamps=Timestamps(alert=NOW))
+
+
+def _op(feature, value, segment=None):
+    tool = "create_segment_override" if segment else "update_feature_state"
+    return WriteOp(tool=tool, project="TrustGate", environment="VaultGuard Prod",
+                   feature=feature, segment=segment, value=value)
+
+
+def _cand(kind, distinct=1):
+    return _validated(distinct=distinct).model_copy(update={"kind": kind})
+
+
+def test_join_lists_like_a_sentence():
+    assert (_join(["a"]), _join(["a", "b"]), _join(["a", "b", "c"])) == (
+        "a", "a and b", "a, b and c")
+
+
+def test_pair_culprit_with_a_one_flag_segment_repair_says_what_it_keeps():
+    text = _explain(_inv([PROMPT_C, TOOLS_C]), _cand(RepairKind.SEGMENT_OVERRIDE),
+                    [_op("agent_tool_policy", "restricted", "high_value_wires")])
+    assert text.startswith(
+        "agent_prompt_version and agent_tool_policy together reproduce the failure; the repair "
+        "reverts agent_tool_policy on high_value_wires and keeps agent_prompt_version. "
+        "Evidence: 0 failures in 20 runs, all identical")
+    assert "changed in the release and reproduces" not in text
+
+
+def test_single_culprit_segment_repair_keeps_nothing_else():
+    text = _explain(_inv([PROMPT_C], "tier0_production"), _cand(RepairKind.SEGMENT_OVERRIDE),
+                    [_op("agent_prompt_version", "v1_strict", "tier0_production")])
+    assert text.startswith("agent_prompt_version changed in the release and reproduces the "
+                           "failure; the repair reverts agent_prompt_version on "
+                           "tier0_production. Evidence:")
+    assert "keeps" not in text
+
+
+def test_pair_reverted_together_names_both():
+    text = _explain(_inv([TOOLS_C, PROMPT_C]), _cand(RepairKind.SEGMENT_OVERRIDE),
+                    [_op("agent_prompt_version", "v1_strict", "high_value_wires"),
+                     _op("agent_tool_policy", "restricted", "high_value_wires")])
+    assert "the repair reverts agent_prompt_version and agent_tool_policy on high_value_wires." \
+        in text and "keeps" not in text
+
+
+def test_surgical_one_flag_repair_is_for_everyone_and_keeps_the_other():
+    text = _explain(_inv([PROMPT_C, TOOLS_C]), _cand(RepairKind.SURGICAL),
+                    [_op("agent_prompt_version", "v1_strict")])
+    assert "the repair reverts agent_prompt_version for everyone and keeps agent_tool_policy." \
+        in text
+
+
+def test_global_repair_lists_every_release_change():
+    ops = [_op(f, v) for f, v in (("agent_context_mode", "summary"), ("agent_max_steps", 6),
+                                  ("agent_prompt_version", "v1_strict"))]
+    text = _explain(_inv([PROMPT_C]), _cand(RepairKind.GLOBAL), ops)
+    assert ("the repair reverts every release change (agent_context_mode, agent_max_steps and "
+            "agent_prompt_version) for everyone.") in text and "keeps" not in text
+
+
+def test_per_flag_proposal_explanation_end_to_end(setup):
+    repo, _, _, make = setup
+    make(PerFlagSearch()).run("inv_1")  # culprit {prompt, tools}; repair reverts tools only
+    text = repo.get_proposal(repo.get_investigation("inv_1").proposal_id).explanation
+    assert text.startswith("agent_prompt_version and agent_tool_policy together reproduce the "
+                           "failure; the repair reverts agent_tool_policy for everyone and "
+                           "keeps agent_prompt_version.")
