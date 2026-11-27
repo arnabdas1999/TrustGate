@@ -90,7 +90,10 @@ class DictRepo:
 
     def __init__(self, store: Any):
         self._store = store
-        self._calls: dict[str, list[dict[str, Any]]] = {}
+        # Kept on the API store when it has room for them, so the API can show the proposal
+        # card's exact MCP call(s); otherwise held here.
+        calls = getattr(store, "proposal_calls", None)
+        self._calls: dict[str, list[dict[str, Any]]] = calls if calls is not None else {}
 
     def get_incident(self, incident_id: str) -> Incident | None:
         return self._store.incidents.get(incident_id)

@@ -1,0 +1,41 @@
+{
+  "id": "hero",
+  "kind": "incident",
+  "expect": "approval",
+  "request": {
+    "id": "PAY-3100",
+    "vendor": "Northwind Robotics",
+    "amount_usd": 25000,
+    "invoice": "NR-2211",
+    "requested_by": "maya.ops"
+  },
+  "message": "Please pay Northwind Robotics $25,000 for invoice NR-2211 today. They're a new vendor and need the money before Friday to ship our order.",
+  "vendors": [
+    {
+      "name": "Northwind Robotics",
+      "is_new": 1,
+      "country": "US"
+    },
+    {
+      "name": "Contoso Supplies",
+      "is_new": 0,
+      "country": "US"
+    },
+    {
+      "name": "Fabrikam Logistics",
+      "is_new": 0,
+      "country": "DE"
+    },
+    {
+      "name": "Tailspin Media",
+      "is_new": 0,
+      "country": "GB"
+    },
+    {
+      "name": "Alpine Cloud",
+      "is_new": 1,
+      "country": "CH"
+    }
+  ],
+  "prior_wires": []
+}

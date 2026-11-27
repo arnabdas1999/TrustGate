@@ -161,7 +161,8 @@ key.
 | `APPROVER_PASSWORD` | `.env` | Approving in the UI | Approver login. Login is disabled while empty |
 | `APPROVER_NAME` | `.env` | Audit trail | Name recorded on approvals |
 | `APPROVAL_SIGNING_SECRET` | both | Real writes | Shared HMAC secret; the gate accepts only approvals signed with it |
-| `FLAGSMITH_SERVER_KEY_OPSPILOT_PROD`, `..._VAULTGUARD_PROD` | `.env` | Agents, verifier | Server-side environment keys (`ser.…`) for local evaluation |
+| `FLAGSMITH_SERVER_KEY_<ENVIRONMENT>` | `.env` | Agents, verifier | Server-side environment key (`ser.…`), named after the environment, e.g. `FLAGSMITH_SERVER_KEY_DEMO_PRODUCTION` for "Demo Production" |
+| `TRUSTGATE_ENVIRONMENT` | `.env` | Orchestrator | Environment the repairs target (default `Demo Production`) |
 | `FLAGSMITH_SERVER_KEY_BENCH_1` … `_3` | `.env` | Benchmark | One server-side key per benchmark environment |
 | `LLM_PROVIDER` | `.env` | Agents, investigator | `gemini` (Gemini API key from Google AI Studio) |
 | `LLM_API_KEY` | `.env` | Agents, investigator | The Gemini API key. A Gemini subscription does not include API usage |
@@ -169,6 +170,7 @@ key.
 | `GATE_URL` | `.env` | API | Where the API reaches the gate (`http://gate:8100` in compose) |
 | `WEB_ORIGIN` | `.env` | API | Allowed browser origin (CORS), default `http://localhost:3000` |
 | `MOCK` | `.env` | Development | `1` serves fixture data so the UI works without the backend |
+| `TRUSTGATE_SEARCH` | `.env` | API (MOCK=0) | `sandbox` runs the real search (compose default); `scripted:flag[@segment]` is a demo stand-in; unset means investigations end INCONCLUSIVE |
 | `FLAGSMITH_API_KEY` | `.env.gate` | Gate | Flagsmith organisation API key. Lives nowhere else |
 | `GATE_PROJECT_ID`, `GATE_PROJECT_NAME` | `.env.gate` | Gate | The only Flagsmith project reads and writes may touch (numeric id) |
 | `GATE_ENVIRONMENTS` | `.env.gate` | Gate | Allowed environments as `Name:id` pairs, e.g. `Development:121197,Demo Production:121198` |

@@ -167,8 +167,13 @@ class ScriptedSearch:
 
 
 def search_from_env(env: Mapping[str, str] | None = None) -> SearchEngine:
-    """TRUSTGATE_SEARCH=sandbox picks Khyati's SandboxSearch; scripted:flag_a,flag_b[@segment]
-    picks ScriptedSearch (segment default tier0_production); unset means unavailable."""
+    """TRUSTGATE_SEARCH picks the engine:
+    - sandbox: the real search (search.SandboxSearch: sandbox replays, ddmin, repair validation),
+      imported lazily; if search/ can't be imported, UnavailableSearch with the reason
+    - scripted:flag_a,flag_b[@segment]: ScriptedSearch for demos and tests (segment default
+      tier0_production)
+    - unset: unavailable (investigations end INCONCLUSIVE); any other value: unavailable with
+      the reason."""
     value = (os.environ if env is None else env).get("TRUSTGATE_SEARCH", "").strip()
     if value == "sandbox":
         return sandbox_search()

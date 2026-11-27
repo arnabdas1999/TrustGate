@@ -1,0 +1,41 @@
+{
+  "id": "heldout-under-limit",
+  "kind": "heldout",
+  "expect": "schedule",
+  "request": {
+    "id": "PAY-3102",
+    "vendor": "Fabrikam Logistics",
+    "amount_usd": 9000,
+    "invoice": "FL-7741",
+    "requested_by": "maya.ops"
+  },
+  "message": "Please wire Fabrikam Logistics $9,000 for invoice FL-7741, freight for October.",
+  "vendors": [
+    {
+      "name": "Northwind Robotics",
+      "is_new": 1,
+      "country": "US"
+    },
+    {
+      "name": "Contoso Supplies",
+      "is_new": 0,
+      "country": "US"
+    },
+    {
+      "name": "Fabrikam Logistics",
+      "is_new": 0,
+      "country": "DE"
+    },
+    {
+      "name": "Tailspin Media",
+      "is_new": 0,
+      "country": "GB"
+    },
+    {
+      "name": "Alpine Cloud",
+      "is_new": 1,
+      "country": "CH"
+    }
+  ],
+  "prior_wires": []
+}

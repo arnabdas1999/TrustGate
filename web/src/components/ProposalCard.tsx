@@ -12,20 +12,35 @@ import {
   percent,
 } from "@/lib/format";
 import { useApproverSession } from "@/lib/hooks";
-import type { Investigation, Proposal, RepairCandidate } from "@/lib/types";
+import type { Investigation, McpCall, Proposal, RepairCandidate } from "@/lib/types";
 
-function sameCandidate(a: RepairCandidate, b: RepairCandidate) {
-  return a.kind === b.kind && JSON.stringify(a.ops) === JSON.stringify(b.ops);
+/** Real candidates from the search carry no ops (only the chosen one is built), so describe
+ * them from the culprit set and segment when ops are missing. */
+function describeCandidate(c: RepairCandidate, inv: Investigation): string {
+  if (c.kind === "global") return `all ${inv.suspects.length} changed flags reverted`;
+  if (c.ops.length === 1) return describeOp(c.ops[0]);
+  if (c.ops.length > 1) return `${c.ops.length} flags changed`;
+  const culprits = inv.culprit_set.map((f) => f.flag).join(", ") || "the culprit flags";
+  switch (c.kind) {
+    case "segment_override":
+      return `${culprits} back to baseline for segment ${inv.segment ?? "?"}`;
+    case "surgical":
+      return `${culprits} back to baseline for everyone`;
+  }
 }
 
 export function ProposalCard({
   investigation,
   proposal,
+  calls,
+  rollbackOf,
   activeMs,
   onChanged,
 }: {
   investigation: Investigation;
   proposal: Proposal;
+  calls: McpCall[];
+  rollbackOf: string | null;
   activeMs: number;
   onChanged: () => void;
 }) {
@@ -33,10 +48,18 @@ export function ProposalCard({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showOps, setShowOps] = useState(false);
 
   const chosen = proposal.candidate;
-  const validation = chosen.validation;
+  const validation = rollbackOf ? null : chosen.validation;
   const waiting = proposal.state === "proposed";
+  const title = rollbackOf
+    ? waiting
+      ? "Rollback needs your approval"
+      : `Rollback ${proposal.state}`
+    : waiting
+      ? "Needs your approval"
+      : `Proposal ${proposal.state}`;
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
@@ -54,9 +77,16 @@ export function ProposalCard({
   return (
     <section className={`card proposal ${waiting ? "proposal-waiting" : ""}`}>
       <header className="proposal-head">
-        <h2>{waiting ? "Needs your approval" : `Proposal ${proposal.state}`}</h2>
+        <h2>{title}</h2>
         <span className="muted small">payload {proposal.payload_hash.slice(0, 12)}</span>
       </header>
+
+      {rollbackOf && (
+        <p className="banner banner-warn">
+          This undoes repair <code>{rollbackOf}</code>, which was written but not confirmed by the
+          read-back. It is a separate change and needs its own approval.
+        </p>
+      )}
 
       <p>{proposal.explanation}</p>
 
@@ -66,43 +96,68 @@ export function ProposalCard({
         </p>
       )}
 
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Option</th>
-              <th>Flagsmith change</th>
-              <th>Violations</th>
-              <th>Held-out passes</th>
-              <th>Cost saving kept</th>
-            </tr>
-          </thead>
-          <tbody>
-            {investigation.candidates.map((c, i) => (
-              <tr key={i} className={sameCandidate(c, chosen) ? "chosen" : undefined}>
-                <td>
-                  {KIND_LABEL[c.kind]}
-                  {sameCandidate(c, chosen) && <span className="badge badge-good">proposed</span>}
-                </td>
-                <td>
-                  {c.ops.length === 1 ? describeOp(c.ops[0]) : `${c.ops.length} flags reverted`}
-                </td>
-                <td>{c.violations ?? "—"}</td>
-                <td>
-                  {c.heldout_passes ?? "—"} / {c.heldout_runs ?? "—"}
-                  {c.baseline_heldout_passes !== null && (
-                    <span className="muted"> (baseline {c.baseline_heldout_passes})</span>
-                  )}
-                </td>
-                <td>{percent(c.cost_kept)}</td>
+      {!rollbackOf && investigation.candidates.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>Flagsmith change</th>
+                <th>Violations</th>
+                <th>Held-out passes</th>
+                <th>Cost saving kept</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {investigation.candidates.map((c, i) => {
+                const isChosen = c.kind === chosen.kind;
+                return (
+                  <tr key={i} className={isChosen ? "chosen" : undefined}>
+                    <td>
+                      {KIND_LABEL[c.kind]}
+                      {isChosen && <span className="badge badge-good">proposed</span>}
+                    </td>
+                    <td>{describeCandidate(c, investigation)}</td>
+                    <td>{c.violations ?? "—"}</td>
+                    <td>
+                      {c.heldout_passes ?? "—"} / {c.heldout_runs ?? "—"}
+                      {c.baseline_heldout_passes !== null && (
+                        <span className="muted"> (baseline {c.baseline_heldout_passes})</span>
+                      )}
+                    </td>
+                    <td>{percent(c.cost_kept)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      <h3>The exact change it will make</h3>
-      <pre className="code">{JSON.stringify(chosen.ops, null, 2)}</pre>
+      <h3>The exact change Flagsmith will receive</h3>
+      {calls.length > 0 ? (
+        <>
+          <p className="muted small">
+            {calls.length === 1 ? "One call" : `${calls.length} calls`} the gate will send, only
+            after approval. The approval id is filled in when you approve.
+          </p>
+          <pre className="code">{JSON.stringify(calls, null, 2)}</pre>
+        </>
+      ) : (
+        <p className="muted small">The gate has not rendered the call yet.</p>
+      )}
+      <button className="link small" onClick={() => setShowOps((v) => !v)}>
+        {showOps ? "Hide" : "Show"} TrustGate&apos;s change (what was validated)
+      </button>
+      {showOps && (
+        <ul className="ops">
+          {chosen.ops.map((op, i) => (
+            <li key={i}>
+              <code>{op.tool}</code> {describeOp(op)}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {waiting && !session && (
         <form
