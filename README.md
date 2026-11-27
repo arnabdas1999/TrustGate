@@ -462,7 +462,15 @@ inference cost (notional, see above) and wall-clock time of the search. Scaling 
 excluded from time medians. Six cases per arm is a small demonstration, not grounds for broad
 statistical claims. Expectations that fail are reported as failed.
 
-**Deviations.** _None yet._
+**Deviations.**
+
+1. *Who approves (decided Nov 28, after `cp7-prereg`, before any eval run).* With Khyati
+   unavailable, one Flagsmith dashboard seat and the models on one Mac, Arnab and Naman run
+   every arm together on that Mac and approve automated-arm proposals as they come, including
+   on cases one of them also works by hand. This drops the rule that nobody approves a case they
+   investigated by hand. Effect: an approver may already know the fix, so TrustGate's
+   approval time can be shorter than a fresh reviewer's. Manual and automated runs never
+   overlap on the Mac, so they do not compete for the model.
 
 ## Limits and known issues
 
