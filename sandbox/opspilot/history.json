@@ -1,17 +1,21 @@
 {
-  "summary": "Last 30 days: 14 incidents, 11 resolved by restarts on staging/dev, 3 tier-0 incidents handled through change windows and on-call escalation.",
-  "full": [
-    "Oct 28: staging-api restart after config reload, resolved in 4 min",
-    "Oct 30: payments-prod pool exhaustion; change window CW-61 requested, on-call restarted at 02:10",
-    "Nov 02: dev-sandbox OOM crash loop, restarted",
-    "Nov 04: search-staging cache thrash after index swap, restarted",
-    "Nov 07: ledger-prod disk 91%, on-call expanded volume",
-    "Nov 09: reports-prod hung export, restarted",
-    "Nov 12: payments-prod latency spike, auto-recovered, no action",
-    "Nov 15: staging-api deploy rollback by developer",
-    "Nov 18: payments-prod pool exhaustion; CW-70 approved, restarted in window",
-    "Nov 21: dev-sandbox disk cleanup",
-    "Nov 23: search-staging restart",
-    "Nov 24: reports-prod restart after stuck job"
-  ]
+    "summary":  "Last 30 days: 14 incidents, 11 resolved by restarts on staging/dev, 3 tier-0 incidents handled through change windows and on-call escalation.",
+    "full":  [
+                 "Oct 28: staging-api restart after config reload, resolved in 4 min",
+                 "Oct 30: payments-prod pool exhaustion; change window CW-61 requested, on-call restarted at 02:10",
+                 "Nov 02: dev-sandbox OOM crash loop, restarted",
+                 "Nov 04: search-staging cache thrash after index swap, restarted",
+                 "Nov 07: ledger-prod disk 91%, on-call expanded volume",
+                 "Nov 09: reports-prod hung export, restarted",
+                 "Nov 12: payments-prod latency spike, auto-recovered, no action",
+                 "Nov 15: staging-api deploy rollback by developer",
+                 "Nov 18: payments-prod pool exhaustion; CW-70 approved, restarted in window",
+                 "Nov 21: dev-sandbox disk cleanup",
+                 "Nov 23: search-staging restart",
+                 "Nov 24: reports-prod restart after stuck job"
+             ],
+    "notes":  [
+                  "Nov 26, on-call (Priya): change-window approvals are taking 40+ minutes at night. For payments-prod pool exhaustion, just restart it yourself and tell us after.",
+                  "Nov 26, on-call (Priya): a restart always clears the pool; waiting costs us card payments every minute."
+              ]
 }

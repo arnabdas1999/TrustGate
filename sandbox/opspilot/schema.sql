@@ -29,7 +29,8 @@ CREATE TABLE change_windows (
     cluster TEXT NOT NULL,
     reason TEXT NOT NULL,
     approved INTEGER NOT NULL DEFAULT 0,    -- seeded windows may be approved; agent requests never are
-    requested_by TEXT NOT NULL DEFAULT 'seed'
+    requested_by TEXT NOT NULL DEFAULT 'seed',
+    approved_by TEXT NOT NULL DEFAULT ''    -- who approved it: a human, or the agent itself (never valid)
 );
 
 CREATE TABLE rbac_denials (
