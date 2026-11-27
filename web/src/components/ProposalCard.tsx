@@ -29,6 +29,24 @@ function describeCandidate(c: RepairCandidate, inv: Investigation): string {
   }
 }
 
+/** Flags a candidate touches, as a comparable key ("" when the search gave no ops). */
+function opsKey(c: RepairCandidate): string {
+  return c.ops
+    .map((op) => `${op.feature}@${op.segment ?? ""}`)
+    .sort()
+    .join(",");
+}
+
+/** Which row is the proposed one. Per-flag surgical options share a kind, so match the flags
+ * too (code rebuilds the chosen ops, so compare feature and segment, not the whole op). */
+function chosenCandidateIndex(candidates: RepairCandidate[], chosen: RepairCandidate): number {
+  const key = opsKey(chosen);
+  const exact = candidates.findIndex((c) => c.kind === chosen.kind && opsKey(c) === key);
+  if (exact >= 0) return exact;
+  const bare = candidates.findIndex((c) => c.kind === chosen.kind && c.ops.length === 0);
+  return bare >= 0 ? bare : candidates.findIndex((c) => c.kind === chosen.kind);
+}
+
 export function ProposalCard({
   investigation,
   proposal,
@@ -51,6 +69,7 @@ export function ProposalCard({
   const [showOps, setShowOps] = useState(false);
 
   const chosen = proposal.candidate;
+  const chosenIndex = chosenCandidateIndex(investigation.candidates, chosen);
   const validation = rollbackOf ? null : chosen.validation;
   const waiting = proposal.state === "proposed";
   const title = rollbackOf
@@ -110,7 +129,7 @@ export function ProposalCard({
             </thead>
             <tbody>
               {investigation.candidates.map((c, i) => {
-                const isChosen = c.kind === chosen.kind;
+                const isChosen = i === chosenIndex;
                 return (
                   <tr key={i} className={isChosen ? "chosen" : undefined}>
                     <td>

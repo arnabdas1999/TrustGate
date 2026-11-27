@@ -12,7 +12,8 @@ Environment (API container, .env):
   single TRUSTGATE_ENVIRONMENT, when set, is the fallback for both
 - FLAGSMITH_SERVER_KEY_<ENV>: a ser. key per environment, for the verifier's read-back
 - TRUSTGATE_SEARCH: "scripted:<flag>,..." for the plumbing demo until search/ lands
-- LLM_PROVIDER=gemini, LLM_API_KEY, MODEL_CHEAP (investigator's model), LLM_LIVE=0 to switch
+- LLM_PROVIDER (ollama, groq, gemini or openai), LLM_BASE_URL, LLM_API_KEY (not needed for
+  ollama), MODEL_CHEAP (investigator's model); see agent/llm.py. LLM_LIVE=0 to switch
   the LLM off (diff order and template explanations)
 """
 
