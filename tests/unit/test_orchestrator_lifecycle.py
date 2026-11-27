@@ -45,13 +45,21 @@ class FakeGate:
     def __init__(self):
         self.fp = "f" * 64
         self.rendered = []
+        self.defaults = {}  # writes that landed: feature -> new environment default
+        self.overrides = {}  # writes that landed: segment -> {feature: value}
+
+    def features(self):
+        return dict(RELEASE)
 
     def read(self, tool, args):
         assert tool == "get_environment_document" and args == {"environment": "Development"}
+        values = {**self.features(), **self.defaults}
+        overrides = {f: {"enabled": True, "value": v, "multivariate": [], "priority": 0}
+                     for f, v in self.overrides.get("tier0_production", {}).items()}
         return {"environment": "Development", "fingerprint": self.fp, "view": {
             "features": {k: {"enabled": True, "value": v, "multivariate": []}
-                         for k, v in RELEASE.items()},
-            "segments": {"tier0_production": {"rules": TIER0_RULES, "overrides": {}}}}}
+                         for k, v in values.items()},
+            "segments": {"tier0_production": {"rules": TIER0_RULES, "overrides": overrides}}}}
 
     def fingerprint(self, environment):
         return self.fp
@@ -151,10 +159,10 @@ def _applied(repo):
 
 
 def test_verified_after_the_write(setup):
-    repo, _, _, make = setup
+    repo, gate, _, make = setup
     orch = make()
     orch.run("inv_1")
-    _applied(repo)
+    _land(gate, _applied(repo))
     orch.verify_after_write("inv_1")
     inv = repo.get_investigation("inv_1")
     proposal = repo.get_proposal(inv.proposal_id)
@@ -658,3 +666,233 @@ def test_per_flag_proposal_explanation_end_to_end(setup):
     assert text.startswith("agent_prompt_version and agent_tool_policy together reproduce the "
                            "failure; the repair reverts agent_tool_policy for everyone and "
                            "keeps agent_prompt_version.")
+
+
+# --- verifier: "outside the segment" = what the environment served before the write --------
+
+class BenchGate(FakeGate):
+    """A bench environment: the release only ran in the sandbox, Flagsmith serves baseline."""
+
+    def features(self):
+        return {**BASELINE, "agent_max_steps": "6"}
+
+
+def _land(gate, proposal):
+    """What Flagsmith's environment document shows once `proposal`'s write has landed."""
+    for op in proposal.candidate.ops:
+        if op.tool == "create_segment_override":
+            gate.overrides.setdefault(op.segment, {})[op.feature] = op.value
+        elif op.tool == "update_feature_state":
+            gate.defaults[op.feature] = op.value
+        else:
+            gate.overrides.get(op.segment, {}).pop(op.feature, None)
+
+
+class ServedFlags:
+    """Serves fixed values: `member` to tier-0 prod identities, `other` to everyone else."""
+
+    def __init__(self, member, other):
+        self.member, self.other = member, other
+
+    def identity_flags(self, identity):
+        tier0 = identity.traits.get("env") == "prod" and identity.traits.get("tier") == 0
+        values = self.member if tier0 else self.other
+        return {k: ServedFlag(v, True, False) for k, v in values.items()}
+
+
+def _release_from_file(repo, tmp_path):
+    """As on bench: the release is a captured file (capture_bench), not the live environment."""
+    path = tmp_path / "release_env.json"
+    path.write_text(json.dumps({"values": RELEASE}))
+    inc = repo.get_incident("inc_1")
+    repo.put_incident(inc.model_copy(update={"release_snapshot": f"file:{path}"}))
+
+
+def _orch(setup, gate, flags, search=None):
+    repo = setup[0]
+    return Orchestrator(repo=repo, gate=gate, search=search or ScriptedSearch(
+        ["agent_prompt_version"]), configs=CONFIG, flag_source=lambda env: flags,
+        sleep=lambda s: None, verify_timeout_s=0)
+
+
+def test_bench_segment_override_verifies_against_the_served_baseline(setup, tmp_path):
+    repo = setup[0]
+    _release_from_file(repo, tmp_path)
+    flags = ServedFlags({"agent_prompt_version": "v1_strict"},
+                        {"agent_prompt_version": "v1_strict"})  # bench: baseline outside
+    gate = BenchGate()
+    orch = _orch(setup, gate, flags)
+    orch.run("inv_1")
+    original = _applied(repo)
+    _land(gate, original)
+    served = repo.get_served(original.id)
+    assert served["agent_prompt_version"] == "v1_strict" and served["agent_max_steps"] == 6
+    assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED  # was FAILED before
+    assert {r.identity.identifier: r.values["agent_prompt_version"]
+            for r in repo.get_proposal(original.id).readback} == {
+        "payments-prod": "v1_strict", "staging-api": "v1_strict"}
+
+
+def test_prod_segment_override_still_expects_the_live_release_outside(setup):
+    repo, gate, _, _ = setup  # FakeGate serves the release: Prod with the release live
+    flags = ServedFlags({"agent_prompt_version": "v1_strict"},
+                        {"agent_prompt_version": "v1_strict"})  # a write that leaked to all
+    orch = _orch(setup, gate, flags)
+    orch.run("inv_1")
+    _applied(repo)
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED  # staging must keep v2_fast
+
+
+def test_rollback_undoes_to_the_pre_write_value_on_bench_and_on_prod(setup, tmp_path):
+    repo = setup[0]
+    _release_from_file(repo, tmp_path)
+    for gate, undo in ((BenchGate(), "restricted"), (FakeGate(), "expanded")):
+        inv = repo.get_investigation("inv_1")
+        repo.put_investigation(inv.model_copy(update={
+            "status": InvestigationStatus.CAPTURING, "proposal_id": None}))
+        flags = ServedFlags({"agent_tool_policy": "wrong"}, {"agent_tool_policy": "wrong"})
+        orch = _orch(setup, gate, flags, search=PerFlagSearch())  # surgical: tools only
+        orch.run("inv_1")
+        _applied(repo)
+        assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+        rollback = repo.get_proposal(repo.get_investigation("inv_1").proposal_id)
+        assert [(o.tool, o.feature, o.value) for o in rollback.candidate.ops] == [
+            ("update_feature_state", "agent_tool_policy", undo)], gate
+
+
+def test_without_a_recorded_pre_write_state_it_reads_now_then_falls_back(setup):
+    repo, _, _, _ = setup
+
+    class FlakyGate(FakeGate):
+        calls = 0
+
+        def read(self, tool, args):
+            FlakyGate.calls += 1
+            if FlakyGate.calls in (3, 4):  # the pre-write and verify-time served reads fail
+                raise RuntimeError("gate down")
+            return super().read(tool, args)  # snapshot, triage and the structural read work
+
+    flags = ServedFlags({"agent_prompt_version": "v1_strict"},
+                        {"agent_prompt_version": "v2_fast"})  # Prod-like read-back
+    gate = FlakyGate()
+    orch = _orch(setup, gate, flags)
+    orch.run("inv_1")
+    original = _applied(repo)
+    _land(gate, original)
+    assert repo.get_served(original.id) is None
+    assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED  # release-diff fallback
+
+
+# --- LLM card text always carries the code-written repair and evidence lines ---------------
+
+from orchestrator.lifecycle import _card_text  # noqa: E402
+
+
+def test_card_text_keeps_the_llm_first_and_appends_repair_and_evidence():
+    inv, cand = _inv([PROMPT_C, TOOLS_C]), _cand(RepairKind.SEGMENT_OVERRIDE)
+    ops = [_op("agent_tool_policy", "restricted", "high_value_wires")]
+    text = _card_text("The split tool plus the fast prompt bypass dual control", inv, cand, ops)
+    assert text.startswith("The split tool plus the fast prompt bypass dual control. "
+                           "agent_prompt_version and agent_tool_policy together reproduce "
+                           "the failure; the repair reverts agent_tool_policy on "
+                           "high_value_wires and keeps agent_prompt_version. Evidence: 0 "
+                           "failures in 20 runs, all identical")
+    assert text.endswith("not a failure-rate estimate.")
+
+
+def test_card_text_does_not_repeat_an_evidence_line_the_llm_already_quoted():
+    inv, cand = _inv([PROMPT_C], "tier0_production"), _cand(RepairKind.SEGMENT_OVERRIDE)
+    ops = [_op("agent_prompt_version", "v1_strict", "tier0_production")]
+    evidence = _evidence(cand)
+    text = _card_text(f"Reverting the prompt fixes it. {evidence}.", inv, cand, ops)
+    assert text.count(evidence) == 1
+    assert "the repair reverts agent_prompt_version on tier0_production." in text
+    assert "Evidence:" not in text
+
+
+def test_llm_explanation_on_the_proposal_carries_the_code_lines(setup):
+    repo = setup[0]
+    _guided(repo)
+    llm = FakeLLM(['["agent_prompt_version"]', "The prompt change breaks tier-0 only"])
+    _with_llm(setup, llm).run("inv_1")
+    text = repo.get_proposal(repo.get_investigation("inv_1").proposal_id).explanation
+    assert text.startswith("The prompt change breaks tier-0 only. agent_prompt_version "
+                           "changed in the release and reproduces the failure; the repair "
+                           "reverts agent_prompt_version on tier0_production. Evidence: "
+                           "0 failures in 20 runs")
+
+
+def test_template_explanation_is_unchanged_without_an_llm(setup):
+    repo, _, _, make = setup
+    make().run("inv_1")
+    text = repo.get_proposal(repo.get_investigation("inv_1").proposal_id).explanation
+    assert text.startswith("agent_prompt_version changed in the release and reproduces the "
+                           "failure; the repair reverts agent_prompt_version on "
+                           "tier0_production. Evidence: 0 failures in 20 runs")
+    assert text.count("Evidence:") == 1
+
+
+
+# --- structural check: the write must be in the environment document ------------------------
+
+def test_bench_without_the_override_fails_even_though_served_values_match(setup, tmp_path):
+    """The gap: on bench the member gets v1_strict anyway, so only the document tells."""
+    repo = setup[0]
+    _release_from_file(repo, tmp_path)
+    flags = ServedFlags({"agent_prompt_version": "v1_strict"},
+                        {"agent_prompt_version": "v1_strict"})
+    orch = _orch(setup, BenchGate(), flags)  # the write never lands in the document
+    orch.run("inv_1")
+    original = _applied(repo)
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+    assert repo.get_proposal(original.id).state is ProposalState.FAILED
+    rollback = repo.get_proposal(repo.get_investigation("inv_1").proposal_id)
+    assert ("override for agent_prompt_version on tier0_production not found in the "
+            "environment document") in rollback.explanation
+
+
+def test_surgical_default_must_be_in_the_document(setup, tmp_path):
+    repo = setup[0]
+    _release_from_file(repo, tmp_path)
+    flags = ServedFlags({"agent_tool_policy": "restricted"}, {"agent_tool_policy": "restricted"})
+    for lands, want in ((False, VerifyStatus.FAILED), (True, VerifyStatus.VERIFIED)):
+        inv = repo.get_investigation("inv_1")
+        repo.put_investigation(inv.model_copy(update={
+            "status": InvestigationStatus.CAPTURING, "proposal_id": None}))
+        gate = FakeGate()  # Prod-like: the release (expanded) is the default before the write
+        orch = _orch(setup, gate, flags, search=PerFlagSearch())  # surgical: tools only
+        orch.run("inv_1")
+        proposal = _applied(repo)
+        if lands:
+            _land(gate, proposal)
+        assert orch.verify_after_write("inv_1") is want, lands
+    assert gate.read("get_environment_document", {"environment": "Development"})[
+        "view"]["features"]["agent_tool_policy"]["value"] == "restricted"
+
+
+def test_rollback_must_remove_the_override_from_the_document(setup):
+    repo, gate, flagsrc, make = setup
+    orch = make()
+    orch.run("inv_1")
+    _land(gate, _applied(repo))
+    flagsrc.applied = False  # the member is served the release: read-back fails
+    orch.verify_after_write("inv_1")
+    _approve_rollback(repo)  # the rollback "applied", but the override is still there
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+    _approve_rollback(repo)
+    gate.overrides.clear()  # now it's really gone
+    assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED
+
+
+def test_gate_read_error_at_verify_time_is_never_verified(setup):
+    repo, gate, _, make = setup
+    orch = make()
+    orch.run("inv_1")
+    _land(gate, _applied(repo))
+
+    def down(tool, args):
+        raise RuntimeError("gate down")
+    gate.read = down
+    status = orch.verify_after_write("inv_1")
+    assert status is not VerifyStatus.VERIFIED and status is VerifyStatus.TIMEOUT
+    assert repo.get_investigation("inv_1").status is InvestigationStatus.FAILED
