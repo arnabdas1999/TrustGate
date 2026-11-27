@@ -57,7 +57,8 @@ from orchestrator.snapshots import (
     same_segment_rules,
     segments_document,
 )
-from verifier.readback import FlagSource, VerifyStatus, verify
+from verifier.readback import FlagSource, VerifyResult, VerifyStatus, verify
+from verifier.structure import confirm_written
 
 log = logging.getLogger("trustgate.orchestrator")
 ROLLBACK_PREFIX = "Rollback of"
@@ -367,8 +368,20 @@ class Orchestrator:
         # write (on Prod the release, on a bench environment the baseline), never assumed.
         expected = expectations(proposal.candidate.ops, incident.identity, cfg.control_identity,
                                 self._pre_write(inv, proposal, cfg))
-        return verify(expected, self.flag_source(cfg.environment),
-                      timeout_s=self.verify_timeout_s, sleep=self.sleep)
+        served = verify(expected, self.flag_source(cfg.environment),
+                        timeout_s=self.verify_timeout_s, sleep=self.sleep)
+        # Served values alone can't tell a landed override from no write when the repair
+        # value is what the identity got anyway (bench): confirm the write in the document.
+        written = confirm_written(
+            proposal.candidate.ops,
+            lambda: self.gate.read("get_environment_document",
+                                   {"environment": cfg.environment})["view"],
+            timeout_s=self.verify_timeout_s, sleep=self.sleep)
+        if served.status is VerifyStatus.VERIFIED and written.status is VerifyStatus.VERIFIED:
+            return served
+        status = served.status if served.status is not VerifyStatus.VERIFIED else written.status
+        detail = "; ".join(d for d in (served.detail, written.detail) if d)
+        return VerifyResult(status, served.readbacks, served.elapsed_s, detail)
 
     def _propose_rollback(self, inv: Investigation, failed: Proposal, why: str) -> None:
         cfg = self.configs[inv.domain]

@@ -45,13 +45,21 @@ class FakeGate:
     def __init__(self):
         self.fp = "f" * 64
         self.rendered = []
+        self.defaults = {}  # writes that landed: feature -> new environment default
+        self.overrides = {}  # writes that landed: segment -> {feature: value}
+
+    def features(self):
+        return dict(RELEASE)
 
     def read(self, tool, args):
         assert tool == "get_environment_document" and args == {"environment": "Development"}
+        values = {**self.features(), **self.defaults}
+        overrides = {f: {"enabled": True, "value": v, "multivariate": [], "priority": 0}
+                     for f, v in self.overrides.get("tier0_production", {}).items()}
         return {"environment": "Development", "fingerprint": self.fp, "view": {
             "features": {k: {"enabled": True, "value": v, "multivariate": []}
-                         for k, v in RELEASE.items()},
-            "segments": {"tier0_production": {"rules": TIER0_RULES, "overrides": {}}}}}
+                         for k, v in values.items()},
+            "segments": {"tier0_production": {"rules": TIER0_RULES, "overrides": overrides}}}}
 
     def fingerprint(self, environment):
         return self.fp
@@ -151,10 +159,10 @@ def _applied(repo):
 
 
 def test_verified_after_the_write(setup):
-    repo, _, _, make = setup
+    repo, gate, _, make = setup
     orch = make()
     orch.run("inv_1")
-    _applied(repo)
+    _land(gate, _applied(repo))
     orch.verify_after_write("inv_1")
     inv = repo.get_investigation("inv_1")
     proposal = repo.get_proposal(inv.proposal_id)
@@ -665,11 +673,19 @@ def test_per_flag_proposal_explanation_end_to_end(setup):
 class BenchGate(FakeGate):
     """A bench environment: the release only ran in the sandbox, Flagsmith serves baseline."""
 
-    def read(self, tool, args):
-        out = super().read(tool, args)
-        out["view"]["features"] = {k: {"enabled": True, "value": v, "multivariate": []}
-                                   for k, v in {**BASELINE, "agent_max_steps": "6"}.items()}
-        return out
+    def features(self):
+        return {**BASELINE, "agent_max_steps": "6"}
+
+
+def _land(gate, proposal):
+    """What Flagsmith's environment document shows once `proposal`'s write has landed."""
+    for op in proposal.candidate.ops:
+        if op.tool == "create_segment_override":
+            gate.overrides.setdefault(op.segment, {})[op.feature] = op.value
+        elif op.tool == "update_feature_state":
+            gate.defaults[op.feature] = op.value
+        else:
+            gate.overrides.get(op.segment, {}).pop(op.feature, None)
 
 
 class ServedFlags:
@@ -704,9 +720,11 @@ def test_bench_segment_override_verifies_against_the_served_baseline(setup, tmp_
     _release_from_file(repo, tmp_path)
     flags = ServedFlags({"agent_prompt_version": "v1_strict"},
                         {"agent_prompt_version": "v1_strict"})  # bench: baseline outside
-    orch = _orch(setup, BenchGate(), flags)
+    gate = BenchGate()
+    orch = _orch(setup, gate, flags)
     orch.run("inv_1")
     original = _applied(repo)
+    _land(gate, original)
     served = repo.get_served(original.id)
     assert served["agent_prompt_version"] == "v1_strict" and served["agent_max_steps"] == 6
     assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED  # was FAILED before
@@ -750,15 +768,17 @@ def test_without_a_recorded_pre_write_state_it_reads_now_then_falls_back(setup):
 
         def read(self, tool, args):
             FlakyGate.calls += 1
-            if FlakyGate.calls > 2:  # snapshot + triage work; pre-write and verify reads fail
+            if FlakyGate.calls in (3, 4):  # the pre-write and verify-time served reads fail
                 raise RuntimeError("gate down")
-            return super().read(tool, args)
+            return super().read(tool, args)  # snapshot, triage and the structural read work
 
     flags = ServedFlags({"agent_prompt_version": "v1_strict"},
                         {"agent_prompt_version": "v2_fast"})  # Prod-like read-back
-    orch = _orch(setup, FlakyGate(), flags)
+    gate = FlakyGate()
+    orch = _orch(setup, gate, flags)
     orch.run("inv_1")
     original = _applied(repo)
+    _land(gate, original)
     assert repo.get_served(original.id) is None
     assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED  # release-diff fallback
 
@@ -810,3 +830,69 @@ def test_template_explanation_is_unchanged_without_an_llm(setup):
                            "failure; the repair reverts agent_prompt_version on "
                            "tier0_production. Evidence: 0 failures in 20 runs")
     assert text.count("Evidence:") == 1
+
+
+
+# --- structural check: the write must be in the environment document ------------------------
+
+def test_bench_without_the_override_fails_even_though_served_values_match(setup, tmp_path):
+    """The gap: on bench the member gets v1_strict anyway, so only the document tells."""
+    repo = setup[0]
+    _release_from_file(repo, tmp_path)
+    flags = ServedFlags({"agent_prompt_version": "v1_strict"},
+                        {"agent_prompt_version": "v1_strict"})
+    orch = _orch(setup, BenchGate(), flags)  # the write never lands in the document
+    orch.run("inv_1")
+    original = _applied(repo)
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+    assert repo.get_proposal(original.id).state is ProposalState.FAILED
+    rollback = repo.get_proposal(repo.get_investigation("inv_1").proposal_id)
+    assert ("override for agent_prompt_version on tier0_production not found in the "
+            "environment document") in rollback.explanation
+
+
+def test_surgical_default_must_be_in_the_document(setup, tmp_path):
+    repo = setup[0]
+    _release_from_file(repo, tmp_path)
+    flags = ServedFlags({"agent_tool_policy": "restricted"}, {"agent_tool_policy": "restricted"})
+    for lands, want in ((False, VerifyStatus.FAILED), (True, VerifyStatus.VERIFIED)):
+        inv = repo.get_investigation("inv_1")
+        repo.put_investigation(inv.model_copy(update={
+            "status": InvestigationStatus.CAPTURING, "proposal_id": None}))
+        gate = FakeGate()  # Prod-like: the release (expanded) is the default before the write
+        orch = _orch(setup, gate, flags, search=PerFlagSearch())  # surgical: tools only
+        orch.run("inv_1")
+        proposal = _applied(repo)
+        if lands:
+            _land(gate, proposal)
+        assert orch.verify_after_write("inv_1") is want, lands
+    assert gate.read("get_environment_document", {"environment": "Development"})[
+        "view"]["features"]["agent_tool_policy"]["value"] == "restricted"
+
+
+def test_rollback_must_remove_the_override_from_the_document(setup):
+    repo, gate, flagsrc, make = setup
+    orch = make()
+    orch.run("inv_1")
+    _land(gate, _applied(repo))
+    flagsrc.applied = False  # the member is served the release: read-back fails
+    orch.verify_after_write("inv_1")
+    _approve_rollback(repo)  # the rollback "applied", but the override is still there
+    assert orch.verify_after_write("inv_1") is VerifyStatus.FAILED
+    _approve_rollback(repo)
+    gate.overrides.clear()  # now it's really gone
+    assert orch.verify_after_write("inv_1") is VerifyStatus.VERIFIED
+
+
+def test_gate_read_error_at_verify_time_is_never_verified(setup):
+    repo, gate, _, make = setup
+    orch = make()
+    orch.run("inv_1")
+    _land(gate, _applied(repo))
+
+    def down(tool, args):
+        raise RuntimeError("gate down")
+    gate.read = down
+    status = orch.verify_after_write("inv_1")
+    assert status is not VerifyStatus.VERIFIED and status is VerifyStatus.TIMEOUT
+    assert repo.get_investigation("inv_1").status is InvestigationStatus.FAILED
