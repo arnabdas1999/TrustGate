@@ -57,9 +57,10 @@ only a separate gate does, and it writes only a signed, single-use, exact, appro
 - Name: TrustGate. Personality: trustworthy: careful, precise, accountable, a tool you'd let near
   production.
 - Flagsmith is named factually (the platform it repairs); no Flagsmith branding or logo use.
-- Visual standard (user's choice, Nov 27, after three rejected themed directions): a clean,
-  conventional product UI with no themed metaphor, at the craft level of Linear, Stripe and
-  Vercel.
+- Visual standard (user's choice, Nov 27, after rejecting three themed directions and a quiet
+  "decision page"): immersive, interactive and graphics-heavy, with characters; never a plain
+  dashboard. The user chose the "3D sandbox arena" concept. Interface craft at the level of
+  Linear, Stripe and Vercel.
 
 ## Evidence on Hand
 

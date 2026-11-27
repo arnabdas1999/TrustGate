@@ -158,7 +158,7 @@ function Pod({
 }
 
 /** The culprit token as the robot holds it in its raised right hand. */
-function HeldToken({ anchors, motion }: { anchors: AnchorMap; motion: boolean }) {
+function HeldToken({ motion }: { motion: boolean }) {
   const ref = useRef<Group>(null);
   useFrame((_, dt) => {
     if (ref.current && motion) ref.current.rotation.y += dt * 1.8;
@@ -170,7 +170,6 @@ function HeldToken({ anchors, motion }: { anchors: AnchorMap; motion: boolean })
         <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={1.1} roughness={0.3} />
       </mesh>
       <pointLight color="#ef4444" intensity={2.5} distance={2.2} />
-      <Anchor id="token" anchors={anchors} position={[0, 0.34, 0]} />
     </group>
   );
 }
@@ -343,7 +342,7 @@ function CameraRig() {
   useFrame(({ camera, size }) => {
     const aspect = size.width / Math.max(1, size.height);
     // keep the whole cast (pod arc to the Prod platform, about 7.4 units each side) in frame
-    const dist = aspect >= 1.45 ? 13.2 : 7.4 / (Math.tan((17 * Math.PI) / 180) * aspect);
+    const dist = aspect >= 1.45 ? 13.2 : 6.3 / (Math.tan((17 * Math.PI) / 180) * aspect);
     camera.position.z = dist; // snap: a resize should frame the cast at once, not drift
     camera.position.y = 4.6 * (dist / 13.2) * 0.85 + 0.7;
     camera.lookAt(0.3, -0.2, -1.2);
@@ -417,14 +416,18 @@ function Scene(props: ArenaProps & { anchors: AnchorMap; hovered: number | null;
             />
           ))}
           <group ref={robot} position={ROBOT_HOME}>
-            <Robot team={team} mood={mood} scale={1.15} motion={motion} hand={culprit && !flying ? <HeldToken anchors={anchors} motion={motion} /> : undefined} />
+            <Robot team={team} mood={mood} scale={1.15} motion={motion} hand={culprit && !flying ? <HeldToken motion={motion} /> : undefined} />
           </group>
+          {culprit && !flying && (
+            // the held token's label floats above the raised hand, over both robots' heads, never across a face
+            <Anchor id="token" anchors={anchors} position={[ROBOT_HOME.x + 0.95, 2.72, ROBOT_HOME.z]} />
+          )}
           {culprit && flying && <Token from={ROBOT_HOME} gate={gate} motion={motion} anchors={anchors} />}
           <Gate state={gate} motion={motion} />
           <group position={[GATE_POS.x - 1.75, 0, GATE_POS.z + 1.25]} rotation={[0, -0.35, 0]}>
             <Robot team="#3b82f6" mood={keeperMood} scale={1.3} motion={motion} shield seed={3} />
           </group>
-          <Anchor id="keeper" anchors={anchors} position={[GATE_POS.x - 1.75, 3.25, GATE_POS.z + 1.25]} />
+          <Anchor id="keeper" anchors={anchors} position={[GATE_POS.x - 1.75, 3.6, GATE_POS.z + 1.25]} />
           {motion && <Sparkles count={40} scale={[16, 5, 8]} position={[0, 2.5, -1]} size={2} speed={0.25} opacity={0.35} color="#d6e8ff" />}
           {gate === "open" && (
             <Sparkles count={60} scale={[3, 3, 3]} position={[PROD_POS.x, 1.8, PROD_POS.z]} size={5} speed={motion ? 0.8 : 0} opacity={0.9} color="#4ade80" />

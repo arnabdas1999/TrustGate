@@ -511,11 +511,7 @@ input:focus-visible {
   animation-delay: 80ms;
 }
 
-.story-meta {
-  font-size: 12.5px;
-  color: var(--ink-3);
-  margin-bottom: 6px;
-}
+
 
 .story-headline {
   font-size: 24px;
@@ -619,7 +615,7 @@ input:focus-visible {
 .progress {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px 0;
+  gap: 6px 18px;
   list-style: none;
   margin: 0;
   padding: 12px 0 0;
@@ -638,14 +634,7 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-/* the connector belongs to the step before it, so a wrapped line never starts with one */
-.progress li:not(:last-child)::after {
-  content: "";
-  width: 14px;
-  height: 1px;
-  margin: 0 6px;
-  background: var(--panel-line-strong);
-}
+/* no connector glyphs: the gap and the step dots carry the sequence, so wraps stay clean */
 
 .progress li.done {
   color: var(--ink);
@@ -1336,11 +1325,13 @@ tr.chosen td {
     inset: auto;
     min-height: 100vh;
     overflow: visible;
+    padding-top: 112px; /* room for the wrapped HUD bar above the canvas */
   }
 
+  /* a short, wide canvas lets the camera sit closer, so the cast stays readable on phones */
   .stage-page .arena {
     position: relative;
-    height: 56vh;
+    height: clamp(240px, 36vh, 300px);
   }
 
   .hud-top {
