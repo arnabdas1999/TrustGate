@@ -9,7 +9,7 @@ approve moment against live Flagsmith with no cache.
 - [ ] `docker compose up --build` with `MOCK=0`; gate healthy (`/health` from inside the network)
 - [ ] OpsPilot hero incident captured and an investigation reached "proposed" (or cached run ready)
 - [ ] VaultGuard interaction run ready (cached is fine, labelled)
-- [ ] Flagsmith dashboard open on the OpsPilot Demo Production environment, flags list visible
+- [ ] Flagsmith dashboard open on the OpsPilot Prod environment (project TrustGate), flags list visible
 - [ ] Claude Code open with the TrustGate MCP server configured (see README)
 - [ ] `bench/results.md` generated from the eval records
 - [ ] Browser zoom 125%, notifications off, a clean browser profile, no keys anywhere on screen

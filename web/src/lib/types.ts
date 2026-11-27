@@ -141,9 +141,17 @@ export interface Proposal {
   readback: ReadBack[];
 }
 
+/** One MCP call exactly as the gate will send it to Flagsmith. */
+export interface McpCall {
+  tool: string;
+  arguments: Record<string, unknown>;
+}
+
 export interface InvestigationView {
   investigation: Investigation;
   proposal: Proposal | null;
+  calls: McpCall[];
+  rollback_of: string | null;
   active_ms: number;
 }
 

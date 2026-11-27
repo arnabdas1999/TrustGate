@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 
 from contracts.hashing import payload_hash, sign_approval
 from contracts.models import Approval, WriteOp
-from gate.approvals import ApprovalStore
+from gate.approvals import ApprovalRefused, ApprovalStore, Refusal
 from gate.audit_log import AuditLog
 from gate.mcp_client import ToolResult
 from gate.scope import GateScope
@@ -187,11 +187,11 @@ def test_settings_parse_environments_and_server_keys():
     s = GateSettings.from_env({
         "FLAGSMITH_API_KEY": "pre.fix", "APPROVAL_SIGNING_SECRET": "s",
         "GATE_PROJECT_ID": "56664", "GATE_PROJECT_NAME": "OpsPilot",
-        "GATE_ENVIRONMENTS": "Development:121197, Demo Production:121198",
-        "GATE_SERVER_KEY_DEVELOPMENT": "ser.dev", "GATE_SERVER_KEY_DEMO_PRODUCTION": "ser.prod"})
+        "GATE_ENVIRONMENTS": "Development:121197, OpsPilot Prod:121198",
+        "GATE_SERVER_KEY_DEVELOPMENT": "ser.dev", "GATE_SERVER_KEY_OPSPILOT_PROD": "ser.prod"})
     assert s.configured
-    assert s.scope.environments == {"Development": 121197, "Demo Production": 121198}
-    assert s.server_keys == {"Development": "ser.dev", "Demo Production": "ser.prod"}
+    assert s.scope.environments == {"Development": 121197, "OpsPilot Prod": 121198}
+    assert s.server_keys == {"Development": "ser.dev", "OpsPilot Prod": "ser.prod"}
     assert "ser.dev" not in repr(s) and "pre.fix" not in repr(s)
 
 
@@ -443,3 +443,35 @@ def test_register_refreshes_cached_ids(setup):
     deps.ids.refresh = lambda: refreshed.append(True)
     _register(client)
     assert refreshed == [True]
+
+
+def test_one_project_with_an_environment_per_agent_parses_and_scopes_writes():
+    s = GateSettings.from_env({
+        "FLAGSMITH_API_KEY": "pre.fix", "APPROVAL_SIGNING_SECRET": "s",
+        "GATE_PROJECT_ID": "56664", "GATE_PROJECT_NAME": "TrustGate",
+        "GATE_ENVIRONMENTS": "OpsPilot Prod:121198,VaultGuard Prod:121299,Development:121197",
+        "GATE_SERVER_KEY_OPSPILOT_PROD": "ser.a", "GATE_SERVER_KEY_VAULTGUARD_PROD": "ser.b",
+        "GATE_SERVER_KEY_DEVELOPMENT": "ser.c"})
+    assert s.configured
+    assert s.scope.environments == {"OpsPilot Prod": 121198, "VaultGuard Prod": 121299,
+                                    "Development": 121197}
+    assert set(s.server_keys) == {"OpsPilot Prod", "VaultGuard Prod", "Development"}
+    assert s.scope.allows_project("TrustGate") and not s.scope.allows_project("OpsPilot")
+    # A signed approval for a write in either agent's environment passes the scope check.
+    store = ApprovalStore(":memory:", secret="s", scope=s.scope)
+    def signed(env):
+        ops = [WriteOp(tool="create_segment_override", project="TrustGate", environment=env,
+                       feature="agent_prompt_version", segment="tier0_production",
+                       value="v1_strict")]
+        exp = datetime.now(UTC) + timedelta(minutes=10)
+        ph = payload_hash(ops)
+        return Approval(proposal_id=f"p-{env}", approval_id=f"a-{env}", approver="naman",
+                        payload_hash=ph, created_at=datetime.now(UTC), expires_at=exp,
+                        signature=sign_approval("s", f"a-{env}", f"p-{env}", ph,
+                                                exp.isoformat())), ops
+
+    for env in ("OpsPilot Prod", "VaultGuard Prod"):
+        store.check(*signed(env))  # raises ApprovalRefused if out of scope
+    with pytest.raises(ApprovalRefused) as err:
+        store.check(*signed("Production"))
+    assert err.value.reason is Refusal.OUT_OF_SCOPE

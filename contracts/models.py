@@ -273,7 +273,7 @@ class Investigation(BaseModel):
     timestamps: Timestamps
     runs_used: int = 0
     usd_used: float = 0.0
-    budget_runs: int = 160
+    budget_runs: int = 240
     budget_usd: float = 5.0
     proposal_id: str | None = None
 

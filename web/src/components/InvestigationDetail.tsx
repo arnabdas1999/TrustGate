@@ -9,6 +9,7 @@ import { useActiveTime, usePolling } from "@/lib/hooks";
 import { ProposalCard } from "./ProposalCard";
 import { SearchMatrix } from "./SearchMatrix";
 import { StatusBadge } from "./StatusBadge";
+import { StatusBanner } from "./StatusBanner";
 import { Timeline } from "./Timeline";
 import { ToolCallLog } from "./ToolCallLog";
 
@@ -22,7 +23,7 @@ export function InvestigationDetail() {
   if (!view) {
     return <p className="muted">{error ? `Could not load: ${error}` : "Loading…"}</p>;
   }
-  const { investigation: inv, proposal, active_ms } = view;
+  const { investigation: inv, proposal, calls, rollback_of, active_ms } = view;
   const budgetShare = Math.min(1, inv.runs_used / inv.budget_runs);
 
   return (
@@ -49,6 +50,8 @@ export function InvestigationDetail() {
         <StatusBadge status={inv.status} />
       </header>
 
+      <StatusBanner status={inv.status} hasRollback={rollback_of !== null} />
+
       <section className="card">
         <Timeline timestamps={inv.timestamps} />
         <div className="budget">
@@ -66,6 +69,8 @@ export function InvestigationDetail() {
         <ProposalCard
           investigation={inv}
           proposal={proposal}
+          calls={calls ?? []}
+          rollbackOf={rollback_of ?? null}
           activeMs={active_ms}
           onChanged={() => void refresh()}
         />

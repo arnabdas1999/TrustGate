@@ -3,7 +3,10 @@
 The search validates repair candidates (narrowest first). This module:
 - picks the narrowest candidate that passed validation
 - builds its WriteOps from the candidate's kind, the culprit set and the segment, using the
-  typed baseline values from the release diff
+  typed baseline values from the release diff. A candidate that carries ops (e.g. a per-flag
+  repair: revert the tools OR revert the prompt) keeps its choice of flags, but code rebuilds
+  each op: project and environment from config, the segment from triage, the value from the
+  baseline. The search can only pick which culprit flags to revert, never a value or scope.
 - checks those ops write exactly what the search validated (validation.config: feature,
   value, segment), so a segment or value the search never tested can't be proposed
 - registers the proposal with the gate, which records payload_hash(ops) and its own settled
@@ -79,6 +82,41 @@ def build_ops(kind: RepairKind, culprit_set: Sequence[FlagChange],
     changes = culprit_set if kind is RepairKind.SURGICAL else suspects
     return [WriteOp(tool="update_feature_state", feature=c.flag, value=_old_value(c), **base)
             for c in sorted(changes, key=lambda c: c.flag)]
+
+
+_TOOL_FOR = {RepairKind.SEGMENT_OVERRIDE: "create_segment_override",
+             RepairKind.SURGICAL: "update_feature_state",
+             RepairKind.GLOBAL: "update_feature_state"}
+
+
+def ops_for_candidate(candidate: RepairCandidate, culprit_set: Sequence[FlagChange],
+                      suspects: Sequence[FlagChange], *, segment: str | None, project: str,
+                      environment: str) -> list[WriteOp]:
+    """candidate.ops when the search supplied them (checked and rebuilt), else build_ops."""
+    if not candidate.ops:
+        return build_ops(candidate.kind, culprit_set, suspects, segment=segment,
+                         project=project, environment=environment)
+    kind, tool = candidate.kind, _TOOL_FOR[candidate.kind]
+    allowed = {c.flag: c for c in (suspects if kind is RepairKind.GLOBAL else culprit_set)}
+    if kind is RepairKind.SEGMENT_OVERRIDE and not segment:
+        raise ProposalError("a segment override needs the incident's segment (triage)")
+    ops, seen = [], set()
+    for op in sorted(candidate.ops, key=lambda o: o.feature):
+        change = allowed.get(op.feature)
+        if op.tool != tool:
+            raise ProposalError(f"{kind.value} candidate carries a {op.tool} op")
+        if change is None or op.feature in seen:
+            raise ProposalError(f"{op.feature} is not a {kind.value} flag of this release, "
+                                "or appears twice")
+        if kind is RepairKind.SEGMENT_OVERRIDE and op.segment != segment:
+            raise ProposalError(f"op segment {op.segment!r} is not the triaged {segment!r}")
+        if op.enabled is not None or not same_value(op.value, _old_value(change)):
+            raise ProposalError(f"{op.feature}: a repair op may only restore the baseline value")
+        seen.add(op.feature)
+        ops.append(WriteOp(tool=tool, project=project, environment=environment,
+                           feature=op.feature, value=_old_value(change),
+                           segment=segment if kind is RepairKind.SEGMENT_OVERRIDE else None))
+    return ops
 
 
 def check_ops_match_validation(ops: Sequence[WriteOp], candidate: RepairCandidate,

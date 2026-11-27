@@ -9,6 +9,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "pydantic>=2.8",
     "httpx>=0.27",
+    "flagsmith>=3.8",
 ]
 
 [dependency-groups]

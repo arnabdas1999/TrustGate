@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from api import settings
 from contracts import (
@@ -30,6 +31,8 @@ class Store:
     investigations: dict[str, Investigation] = field(default_factory=dict)
     proposals: dict[str, Proposal] = field(default_factory=dict)
     approvals: dict[str, Approval] = field(default_factory=dict)
+    # The exact MCP call(s) the gate rendered for each proposal, shown on the proposal card.
+    proposal_calls: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     audit: list[AuditEntry] = field(default_factory=list)
     activity: list[ActivityPing] = field(default_factory=list)
     sessions: dict[str, Session] = field(default_factory=dict)
@@ -64,4 +67,5 @@ def seeded(mock: bool) -> Store:
         from api import mock_data
 
         store.investigations, store.proposals, store.audit = mock_data.build()
+        store.proposal_calls = mock_data.calls(store.proposals)
     return store

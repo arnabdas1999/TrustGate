@@ -16,7 +16,7 @@ from gate.writer import (
 )
 
 SCOPE = GateScope(project_id=56664, project_name="OpsPilot",
-                  environments={"Development": 121197, "Demo Production": 121198})
+                  environments={"Development": 121197, "OpsPilot Prod": 121198})
 IDS = StaticIds(features={"agent_prompt_version": 306127, "agent_tool_policy": 306128,
                           "agent_max_steps": 306129, "agent_safe_fallback": 306132},
                 segments={"tier0_production": 1205876, "high_value_wires": 77})
@@ -87,7 +87,7 @@ def test_explicit_enabled_is_kept():
 
 @pytest.mark.parametrize("ops", [
     [],
-    [op(), op(environment="Demo Production")],
+    [op(), op(environment="OpsPilot Prod")],
     [op(environment="Production")],
     [op(feature="unknown_flag")],
     [op(segment="unknown_segment")],

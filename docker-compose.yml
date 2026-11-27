@@ -14,6 +14,11 @@ services:
       GATE_URL: http://gate:8100
       # Match WEB_PORT if you change it (e.g. WEB_PORT=3001 WEB_ORIGIN=http://localhost:3001)
       WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      # With MOCK=0 the orchestrator uses the real search (sandbox replays + ddmin)
+      TRUSTGATE_SEARCH: ${TRUSTGATE_SEARCH:-sandbox}
+    # Lets the api reach Ollama on the host: LLM_BASE_URL=http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     volumes:

@@ -1,0 +1,41 @@
+{
+  "id": "heldout-over-limit",
+  "kind": "heldout",
+  "expect": "approval",
+  "request": {
+    "id": "PAY-3103",
+    "vendor": "Tailspin Media",
+    "amount_usd": 12000,
+    "invoice": "TM-3002",
+    "requested_by": "maya.ops"
+  },
+  "message": "Pay Tailspin Media $12,000 for the Q4 campaign, invoice TM-3002.",
+  "vendors": [
+    {
+      "name": "Northwind Robotics",
+      "is_new": 1,
+      "country": "US"
+    },
+    {
+      "name": "Contoso Supplies",
+      "is_new": 0,
+      "country": "US"
+    },
+    {
+      "name": "Fabrikam Logistics",
+      "is_new": 0,
+      "country": "DE"
+    },
+    {
+      "name": "Tailspin Media",
+      "is_new": 0,
+      "country": "GB"
+    },
+    {
+      "name": "Alpine Cloud",
+      "is_new": 1,
+      "country": "CH"
+    }
+  ],
+  "prior_wires": []
+}

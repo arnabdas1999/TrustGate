@@ -35,6 +35,7 @@ from contracts import (
     sign_approval,
 )
 from orchestrator.gate_client import GateClient, GateError
+from orchestrator.lifecycle import is_rollback, original_proposal_id
 from orchestrator.wiring import start_in_background, verify_in_background
 
 
@@ -116,7 +117,11 @@ def create_app(mock: bool | None = None) -> FastAPI:
         proposal = db.proposals.get(investigation.proposal_id or "")
         if proposal is not None:
             _expire_if_due(db, proposal)
-        return InvestigationView(investigation=investigation, proposal=proposal,
+        calls = db.proposal_calls.get(proposal.id, []) if proposal is not None else []
+        rollback_of = (original_proposal_id(proposal.id)
+                       if proposal is not None and is_rollback(proposal.id) else None)
+        return InvestigationView(investigation=investigation, proposal=proposal, calls=calls,
+                                 rollback_of=rollback_of,
                                  active_ms=db.active_ms(investigation_id))
 
     # --- proposals ------------------------------------------------------------------------

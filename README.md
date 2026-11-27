@@ -146,6 +146,20 @@ uv run python -m scripts.smoke     # expect: SMOKE PASSED
 With `MOCK=1` the gate isn't needed. With real Flagsmith keys, run it too (third terminal):
 `uv run uvicorn gate.service:app --env-file .env.gate --port 8100`.
 
+### Real mode with Ollama (the end-to-end setup)
+
+1. Install [Ollama](https://ollama.com) and pull the two models: `ollama pull qwen3:14b` and
+   `ollama pull llama3.2:3b` (about 11 GB together).
+2. Write `.env` and `.env.gate` with the setup script. It asks for the Flagsmith keys (typed
+   hidden) and offers the Ollama defaults: `bash scripts/setup_env.sh` on macOS/Linux, or
+   `powershell -ExecutionPolicy Bypass -File scripts\setup_env.ps1` on Windows.
+3. `docker compose up --build`, then open http://localhost:3000. The api container reaches
+   Ollama on the host at `host.docker.internal:11434`.
+4. Play a release (it reads the keys from `.env.gate`) and start an investigation from the UI:
+   `uv run --env-file .env.gate python -m scripts.release --environment "OpsPilot Prod"
+   --confirm-environment "OpsPilot Prod"`. Revert afterwards with `--revert
+   data/releases/OpsPilot Prod/<time>/baseline_env.json`.
+
 Notes: on a OneDrive folder set `UV_LINK_MODE=copy` before `uv sync`; a uv warning that
 hardlinking failed is harmless. If the API isn't on port 8000, build the UI with a matching
 `NEXT_PUBLIC_API_URL`.
@@ -161,18 +175,25 @@ key.
 | `APPROVER_PASSWORD` | `.env` | Approving in the UI | Approver login. Login is disabled while empty |
 | `APPROVER_NAME` | `.env` | Audit trail | Name recorded on approvals |
 | `APPROVAL_SIGNING_SECRET` | both | Real writes | Shared HMAC secret; the gate accepts only approvals signed with it |
-| `FLAGSMITH_SERVER_KEY_OPSPILOT_PROD`, `..._VAULTGUARD_PROD` | `.env` | Agents, verifier | Server-side environment keys (`ser.…`) for local evaluation |
+| `FLAGSMITH_SERVER_KEY_<ENVIRONMENT>` | `.env` | Agents, verifier | Server-side environment key (`ser.…`), named after the environment, e.g. `FLAGSMITH_SERVER_KEY_OPSPILOT_PROD` for "OpsPilot Prod" and `FLAGSMITH_SERVER_KEY_VAULTGUARD_PROD` |
+| `TRUSTGATE_PROJECT` | `.env` | Orchestrator | The one Flagsmith project for both agents (default `TrustGate`) |
+| `TRUSTGATE_ENVIRONMENT_OPSPILOT`, `TRUSTGATE_ENVIRONMENT_VAULTGUARD` | `.env` | Orchestrator | Environment each agent's repairs go to (defaults `OpsPilot Prod`, `VaultGuard Prod`) |
 | `FLAGSMITH_SERVER_KEY_BENCH_1` … `_3` | `.env` | Benchmark | One server-side key per benchmark environment |
-| `LLM_PROVIDER` | `.env` | Agents, investigator | `gemini` (Gemini API key from Google AI Studio) |
-| `LLM_API_KEY` | `.env` | Agents, investigator | The Gemini API key. A Gemini subscription does not include API usage |
-| `MODEL_CHEAP`, `MODEL_FLAGSHIP` | `.env` | Agents | Real model IDs behind the flag values `model_cheap` and `model_flagship` |
+| `LLM_PROVIDER` | `.env` | Agents, investigator | `ollama` (local and free, the main engine), `groq` (free tier, backup), `gemini`, or `openai` (any OpenAI-compatible API) |
+| `LLM_BASE_URL` (or `OLLAMA_URL`) | `.env` | Agents, investigator | Ollama: `http://localhost:11434`, or `http://host.docker.internal:11434` from compose. Defaults exist for `groq`; `openai` needs it |
+| `LLM_API_KEY` | `.env` | Agents, investigator | Groq or Gemini key. Not needed for Ollama |
+| `LLM_THINK`, `LLM_TIMEOUT_S` | `.env` | Agents, investigator | Optional. Ollama runs with `think=false` unless `LLM_THINK=1`; timeout per call |
+| `SANDBOX_PARALLEL` | `.env` | Search | Replays run at once (default 8). Use `1` with Ollama unless `OLLAMA_NUM_PARALLEL` is raised |
+| `PRICE_MODEL_CHEAP`, `PRICE_MODEL_FLAGSHIP` | `.env` | Agents | Optional USD per 1M tokens as `in,out`. Local models keep the notional defaults so `cost saving kept` stays comparable |
+| `MODEL_CHEAP`, `MODEL_FLAGSHIP` | `.env` | Agents | Real model IDs behind the flag values `model_cheap` and `model_flagship`. Ollama on the Mac: `llama3.2:3b` and `qwen3:14b` |
 | `GATE_URL` | `.env` | API | Where the API reaches the gate (`http://gate:8100` in compose) |
 | `WEB_ORIGIN` | `.env` | API | Allowed browser origin (CORS), default `http://localhost:3000` |
 | `MOCK` | `.env` | Development | `1` serves fixture data so the UI works without the backend |
+| `TRUSTGATE_SEARCH` | `.env` | API (MOCK=0) | `sandbox` runs the real search (compose default); `scripted:flag[@segment]` is a demo stand-in; unset means investigations end INCONCLUSIVE |
 | `FLAGSMITH_API_KEY` | `.env.gate` | Gate | Flagsmith organisation API key. Lives nowhere else |
 | `GATE_PROJECT_ID`, `GATE_PROJECT_NAME` | `.env.gate` | Gate | The only Flagsmith project reads and writes may touch (numeric id) |
-| `GATE_ENVIRONMENTS` | `.env.gate` | Gate | Allowed environments as `Name:id` pairs, e.g. `Development:121197,Demo Production:121198` |
-| `GATE_SERVER_KEY_<ENV>` | `.env.gate` | Gate | One server-side key per environment, e.g. `GATE_SERVER_KEY_DEMO_PRODUCTION` |
+| `GATE_ENVIRONMENTS` | `.env.gate` | Gate | Allowed environments as `Name:id` pairs, e.g. `OpsPilot Prod:121198,VaultGuard Prod:121309,Development:121197` |
+| `GATE_SERVER_KEY_<ENV>` | `.env.gate` | Gate | One server-side key per environment, e.g. `GATE_SERVER_KEY_OPSPILOT_PROD` |
 | `FLAGSMITH_MCP_URL` | `.env.gate` | Gate | Optional. Leave unset to use the default, `https://mcp.flagsmith.com/mcp` |
 | `GATE_DB_PATH`, `GATE_AUDIT_PATH` | `.env.gate` | Gate | Optional paths for the approvals database and the audit trail |
 | `GATE_SHARED_TOKEN` | both | Gate, API | Optional. When set, every gate call needs this bearer token (off by default). Put the same value in `.env` too, or the API's approvals and reads are refused |

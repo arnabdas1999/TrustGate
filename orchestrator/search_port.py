@@ -3,9 +3,15 @@
 The plan's interface is `search.run(incident, suspects, mode)`. It reproduces the failure,
 runs ddmin over the suspects, and validates repair candidates narrowest first. Until search/
 lands on a branch, the orchestrator runs against:
+- TRUSTGATE_SEARCH=sandbox: Khyati's search.SandboxSearch (real replays on the sandbox). It
+  implements this protocol directly. Imported lazily; if search/ isn't importable the API
+  still serves and investigations end INCONCLUSIVE with the reason.
 - ScriptedSearch: deterministic, names configured culprits. For tests and the plumbing demo
   only, never for the benchmark (it doesn't replay anything).
 - UnavailableSearch: the default. It refuses, so nothing pretends to have searched.
+
+Suspects arrive already ordered (guided: agent/ordering.py; plain: diff order); the engine
+takes the order as given.
 
 Candidates carry no ops: code builds the WriteOps from the candidate's kind, the culprit set
 and the segment (orchestrator/proposals.py).
@@ -13,6 +19,7 @@ and the segment (orchestrator/proposals.py).
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -62,10 +69,29 @@ class SearchEngine(Protocol):
             mode: InvestigationMode) -> SearchResult: ...
 
 
+log = logging.getLogger("trustgate.orchestrator")
+DEFAULT_UNAVAILABLE = "no search engine configured (set TRUSTGATE_SEARCH)"
+
+
 class UnavailableSearch:
+    def __init__(self, reason: str = DEFAULT_UNAVAILABLE):
+        self.reason = reason
+
     def run(self, incident: Incident, suspects: Sequence[FlagChange],
             mode: InvestigationMode) -> SearchResult:
-        raise SearchUnavailable("no search engine configured (search/ is not on this branch)")
+        raise SearchUnavailable(self.reason)
+
+
+def sandbox_search() -> SearchEngine:
+    """Khyati's SandboxSearch, imported only when asked for. Never raises."""
+    try:
+        from search import SandboxSearch  # noqa: PLC0415 (lazy: search/ may not be installed)
+    except Exception as exc:  # noqa: BLE001 (ImportError, or an error inside search/ itself)
+        reason = f"TRUSTGATE_SEARCH=sandbox but search/ can't be imported: " \
+                 f"{type(exc).__name__}: {exc}"
+        log.warning(reason)
+        return UnavailableSearch(reason)
+    return SandboxSearch()
 
 
 def _config(changes: Sequence[FlagChange]) -> FlagConfig:
@@ -140,12 +166,31 @@ class ScriptedSearch:
                             candidates=candidates, runs_used=sum(s.runs for s in steps))
 
 
+def sandbox_segments() -> Mapping[str, dict] | None:
+    """The segment definitions the sandbox replays against (sandbox/flags.py SEGMENTS), or None
+    if sandbox/ can't be imported."""
+    try:
+        from sandbox.flags import SEGMENTS  # noqa: PLC0415
+    except Exception:  # noqa: BLE001
+        return None
+    return SEGMENTS
+
+
 def search_from_env(env: Mapping[str, str] | None = None) -> SearchEngine:
-    """TRUSTGATE_SEARCH=scripted:flag_a,flag_b[@segment] picks ScriptedSearch (segment default
-    tier0_production); unset means unavailable."""
-    value = (os.environ if env is None else env).get("TRUSTGATE_SEARCH", "")
+    """TRUSTGATE_SEARCH picks the engine:
+    - sandbox: the real search (search.SandboxSearch: sandbox replays, ddmin, repair validation),
+      imported lazily; if search/ can't be imported, UnavailableSearch with the reason
+    - scripted:flag_a,flag_b[@segment]: ScriptedSearch for demos and tests (segment default
+      tier0_production)
+    - unset: unavailable (investigations end INCONCLUSIVE); any other value: unavailable with
+      the reason."""
+    value = (os.environ if env is None else env).get("TRUSTGATE_SEARCH", "").strip()
+    if value == "sandbox":
+        return sandbox_search()
     if value.startswith("scripted:"):
         flags, _, segment = value[len("scripted:"):].partition("@")
         return ScriptedSearch([f.strip() for f in flags.split(",") if f.strip()],
                               segment=segment.strip() or "tier0_production")
+    if value:
+        return UnavailableSearch(f"unknown TRUSTGATE_SEARCH value {value!r}")
     return UnavailableSearch()

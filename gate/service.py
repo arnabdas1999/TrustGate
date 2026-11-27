@@ -15,8 +15,9 @@ The only process that holds the Flagsmith organisation key. Endpoints:
 
 Configuration comes only from the gate's environment (compose passes .env.gate):
 FLAGSMITH_API_KEY, APPROVAL_SIGNING_SECRET, GATE_PROJECT_ID, GATE_PROJECT_NAME,
-GATE_ENVIRONMENTS ("Development:121197,Demo Production:121198"),
-GATE_SERVER_KEY_<ENV> (a ser. key per environment, e.g. GATE_SERVER_KEY_DEMO_PRODUCTION),
+GATE_ENVIRONMENTS ("OpsPilot Prod:121198,VaultGuard Prod:<id>,Development:121197": one
+project, one environment per agent), GATE_SERVER_KEY_<ENV> (a ser. key per environment,
+e.g. GATE_SERVER_KEY_OPSPILOT_PROD),
 optional FLAGSMITH_MCP_URL, GATE_DB_PATH, GATE_AUDIT_PATH, and GATE_SHARED_TOKEN: when set,
 every /gate/* call needs "Authorization: Bearer <token>" (off by default until the API sends
 it). Without the required settings the service still

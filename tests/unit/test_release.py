@@ -1,4 +1,5 @@
 import json
+import shlex
 
 import httpx
 import pytest
@@ -17,7 +18,7 @@ from scripts.release import (
 )
 
 ENVS = [{"id": 121197, "name": "Development", "api_key": "dev-client-key"},
-        {"id": 121198, "name": "Demo Production", "api_key": "prod-client-key"}]
+        {"id": 121198, "name": "OpsPilot Prod", "api_key": "prod-client-key"}]
 FEATURES = [{"id": 306125 + i, "name": n} for i, n in enumerate(
     ["agent_model", "x", "agent_prompt_version", "agent_tool_policy", "agent_max_steps",
      "agent_context_mode", "agent_temperature", "agent_safe_fallback"])]
@@ -172,7 +173,7 @@ def test_snapshot_refuses_a_server_key_for_another_environment(api, fake):
                                           base_url="https://edge.api.flagsmith.com"))
 
 
-@pytest.mark.parametrize("env", ["Demo Production", "bench-1", "Production"])
+@pytest.mark.parametrize("env", ["OpsPilot Prod", "bench-1", "Production"])
 def test_other_environments_need_explicit_confirmation(env):
     with pytest.raises(ReleaseError, match="confirm"):
         check_environment_allowed(env, confirm=None)
@@ -209,13 +210,13 @@ def test_publish_value_sends_enabled(api, fake):
 def test_apply_values_refuses_other_environments_without_confirmation(api, fake, confirm):
     changes = plan_changes(BASELINE, PLAN_RELEASE)
     with pytest.raises(ReleaseError, match="confirm"):
-        apply_values(api, "Demo Production", changes, note="x", confirm=confirm)
+        apply_values(api, "OpsPilot Prod", changes, note="x", confirm=confirm)
     assert fake.versions == [] and fake.headers == []  # refused before any request
 
 
 def test_apply_values_writes_a_confirmed_environment(api, fake):
     changes = plan_changes(BASELINE, PLAN_RELEASE)
-    apply_values(api, "Demo Production", changes, note="x", confirm="Demo Production")
+    apply_values(api, "OpsPilot Prod", changes, note="x", confirm="OpsPilot Prod")
     assert len(fake.versions) == 5
     assert all(p.startswith("/api/v1/environments/121198/") for p, _ in fake.versions)
 
@@ -268,7 +269,7 @@ def test_revert_target_takes_values_and_enabled_from_the_baseline():
     assert values == {k: BASELINE[k] for k in PLAN_RELEASE}
     assert enabled == {**dict.fromkeys(PLAN_RELEASE, True), "agent_context_mode": False}
     with pytest.raises(ReleaseError, match="another environment"):
-        revert_target(saved, "Demo Production")
+        revert_target(saved, "OpsPilot Prod")
 
 
 def test_revert_target_reads_enabled_from_an_older_baseline():
@@ -324,15 +325,15 @@ def test_main_passes_the_confirmation_to_apply_values(run_main, monkeypatch):
 
     monkeypatch.setattr(release, "apply_values", spy)
     fake = FakeFlagsmith(env_id=121198)
-    assert run_main(fake, "--environment", "Demo Production",
-                    "--confirm-environment", "Demo Production") == 0
-    assert seen["confirm"] == "Demo Production"
+    assert run_main(fake, "--environment", "OpsPilot Prod",
+                    "--confirm-environment", "OpsPilot Prod") == 0
+    assert seen["confirm"] == "OpsPilot Prod"
     assert all(p.startswith("/api/v1/environments/121198/") for p, _ in fake.versions)
 
 
 def test_main_refuses_an_unconfirmed_environment(run_main):
     fake = FakeFlagsmith(env_id=121198)
-    assert run_main(fake, "--environment", "Demo Production") == 2
+    assert run_main(fake, "--environment", "OpsPilot Prod") == 2
     assert fake.versions == []
 
 
@@ -352,8 +353,9 @@ def test_main_half_applied_release_prints_the_exact_revert_command(run_main, tmp
     baseline = next(tmp_path.glob("Development/*/baseline_env.json"))
     err = capsys.readouterr().err
     assert "Flagsmith call failed: ConnectError" in err
-    assert ("uv run python -m scripts.release --environment Development --revert "
-            f"{baseline}") in err
+    # Built with the same quoting as release.py, so it holds on Windows paths too.
+    assert shlex.join(["uv", "run", "python", "-m", "scripts.release", "--environment",
+                       "Development", "--revert", str(baseline)]) in err
 
     fake.versions.clear()  # the printed command puts every flag back
     healthy = FakeFlagsmith(values=fake.values, enabled=fake.enabled)
@@ -368,7 +370,7 @@ def test_main_half_applied_revert_says_to_run_the_same_revert(run_main, tmp_path
     broken = FailsMidRelease(values=base.values)
     assert run_main(broken, "--environment", "Development", "--revert", str(baseline)) == 2
     err = capsys.readouterr().err
-    assert "To finish the revert" in err and f"--revert {baseline}" in err
+    assert "To finish the revert" in err and f"--revert {shlex.quote(str(baseline))}" in err
 
 
 def test_main_failure_before_any_write_prints_no_revert_hint(run_main, capsys):

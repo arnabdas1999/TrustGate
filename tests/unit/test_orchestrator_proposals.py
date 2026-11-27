@@ -271,3 +271,80 @@ def test_unvalidated_candidate_is_refused():
     with pytest.raises(ProposalError, match="never validated"):
         check_ops_match_validation(_built(RepairKind.SURGICAL),
                                    RepairCandidate(kind=RepairKind.SURGICAL, ops=[]), SUSPECTS)
+
+
+# --- candidates that carry their own ops (per-flag repairs) ------------------------------------
+
+from contracts.models import WriteOp  # noqa: E402
+from orchestrator.proposals import ops_for_candidate, passing_candidates  # noqa: E402
+
+CULPRITS = [PROMPT, TOOLS]
+
+
+def _op(tool="update_feature_state", feature="agent_tool_policy", value="restricted",
+        segment=None, **kw):
+    return WriteOp(tool=tool, project=kw.pop("project", "anything"),
+                   environment=kw.pop("environment", "OpsPilot Prod"), feature=feature,
+                   value=value, segment=segment, **kw)
+
+
+def _for(kind, ops, segment="tier0_production"):
+    cand = RepairCandidate(kind=kind, ops=ops, validation=_validation())
+    return ops_for_candidate(cand, CULPRITS, SUSPECTS, segment=segment, project="OpsPilot",
+                             environment="Development")
+
+
+def test_candidate_without_ops_is_built_from_its_kind():
+    assert _for(RepairKind.SURGICAL, []) == build_ops(
+        RepairKind.SURGICAL, CULPRITS, SUSPECTS, segment=None, project="OpsPilot",
+        environment="Development")
+
+
+def test_per_flag_candidate_keeps_its_flag_and_takes_scope_from_config():
+    ops = _for(RepairKind.SURGICAL, [_op()])  # revert the tools only, not the prompt
+    assert [(o.tool, o.feature, o.value, o.project, o.environment, o.segment) for o in ops] == [
+        ("update_feature_state", "agent_tool_policy", "restricted", "OpsPilot", "Development",
+         None)]
+
+
+def test_per_flag_segment_candidate_uses_the_triaged_segment():
+    ops = _for(RepairKind.SEGMENT_OVERRIDE,
+               [_op("create_segment_override", "agent_prompt_version", "v1_strict",
+                    segment="tier0_production")])
+    assert [(o.feature, o.segment, o.value) for o in ops] == [
+        ("agent_prompt_version", "tier0_production", "v1_strict")]
+
+
+@pytest.mark.parametrize("op", [
+    _op(tool="create_segment_override", segment="tier0_production"),  # wrong tool for surgical
+    _op(feature="agent_max_steps", value=6),  # not a culprit
+    _op(value="admin"),  # not the baseline value
+    _op(enabled=False),  # never toggles enabled
+])
+def test_surgical_candidate_ops_the_search_cannot_choose(op):
+    with pytest.raises(ProposalError):
+        _for(RepairKind.SURGICAL, [op])
+
+
+def test_duplicate_flags_and_foreign_segments_are_refused():
+    with pytest.raises(ProposalError, match="twice"):
+        _for(RepairKind.SURGICAL, [_op(), _op()])
+    with pytest.raises(ProposalError, match="triaged"):
+        _for(RepairKind.SEGMENT_OVERRIDE,
+             [_op("create_segment_override", "agent_prompt_version", "v1_strict",
+                  segment="high_value_wires")])
+
+
+def test_global_candidate_ops_may_name_any_release_change():
+    ops = _for(RepairKind.GLOBAL, [_op(feature="agent_max_steps", value="6")])
+    assert [(o.feature, o.value) for o in ops] == [("agent_max_steps", 6)]  # typed baseline
+
+
+def test_inconclusive_and_unvalidated_candidates_are_never_proposed():
+    inconclusive = TestResult(phase=TestPhase.VALIDATE, runs=20, failures=0,
+                              outcome=TestOutcome.INCONCLUSIVE,
+                              config=FlagConfig(values={}, source=ConfigSource.OVERRIDE))
+    cands = [RepairCandidate(kind=RepairKind.SEGMENT_OVERRIDE, ops=[], validation=inconclusive),
+             RepairCandidate(kind=RepairKind.GLOBAL, ops=[]),  # listed, never validated
+             _cand(RepairKind.SURGICAL)]
+    assert [c.kind for c in passing_candidates(cands)] == [RepairKind.SURGICAL]
