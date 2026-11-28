@@ -533,7 +533,7 @@ def test_adaptive_engine_uses_far_fewer_runs(tmp_path, monkeypatch):
     assert SandboxSearch().adaptive is True
 
 
-# -- baseline held-out cache (opt-in) ---------------------------------------------------------------
+# -- baseline held-out cache (opt-in) ----------------------------------------------------------
 
 
 def test_heldout_cache_reuses_the_baseline_only():
