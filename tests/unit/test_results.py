@@ -49,7 +49,7 @@ def _key(*flags):
 def _rows(markdown):
     """Results-table rows as label -> [Manual, Global rollback, Plain ddmin, TrustGate]."""
     out = {}
-    for line in markdown.split("## What this shows")[0].splitlines():
+    for line in markdown.split("## What this shows")[0].split("By domain")[0].splitlines():
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
@@ -169,7 +169,8 @@ def test_empty_arms_show_dash():
         manual, rollback, _, trustgate = cells
         assert manual == rollback == trustgate == "—", label
     assert rows["Inference cost (total)"][2] == "—"  # plain arm has runs but no cost data
-    assert "n per arm: Manual 0 · Global rollback 0 · Plain ddmin 1 · TrustGate 0" in md
+    assert ("n per arm: Manual 0 · Global rollback 0 · TrustGate (plain ddmin) 1 · "
+            "TrustGate + LLM ranking 0") in md
 
 
 def test_attribution_and_unnecessary_reverts_with_keys():
@@ -313,7 +314,7 @@ def test_zero_active_time_on_an_approved_automated_run_counts_as_missing():
     assert plain["human_active_ms_median"] == 6000
     assert plain["human_active_missing"] == 1
     md = render(summarize(runs, {}), [], generated_at=WHEN)
-    assert "not measured on 1 Plain ddmin run:" in md
+    assert "not measured on 1 TrustGate (plain ddmin) run:" in md
 
 
 def test_excluded_records_leave_the_arm_totals_and_are_listed():
@@ -327,7 +328,7 @@ def test_excluded_records_leave_the_arm_totals_and_are_listed():
     assert summary["arms"]["guided"]["n"] == 1
     assert summary["arms"]["guided"]["unsolved"] == 0
     md = render(summary, [], generated_at=WHEN)
-    assert "not in the TrustGate totals: opspilot-eval-1 (inv_old). Superseded." in md
+    assert "not in the TrustGate + LLM ranking totals: opspilot-eval-1 (inv_old). Superseded." in md
     assert "(inv_expired). Expired." in md
 
 
@@ -368,4 +369,15 @@ def test_render_has_the_shows_and_doesnt_show_blocks():
                  cost_kept=1.0)]
     md = render(summarize(runs, {}), [], generated_at=WHEN)
     assert "## What this shows" in md and "## What this doesn't show" in md
-    assert "| opspilot-eval-1 | Plain ddmin | 5 | 2m 00s | 100% | — |" in md
+    assert "| opspilot-eval-1 | TrustGate (plain ddmin) | 5 | 2m 00s | 100% | — |" in md
+
+
+def test_scaling_is_also_shown_by_domain():
+    recs = [ScalingRecord(case=f"scaling-{d}-{n}", release_size=n, arm=arm, search_runs=runs,
+                          found_culprit=found)
+            for d, arm, n, runs, found in [
+                ("opspilot", Arm.PLAIN, 5, 5, True), ("vaultguard", Arm.PLAIN, 5, 10, True),
+                ("opspilot", Arm.GUIDED, 5, 6, True), ("vaultguard", Arm.GUIDED, 5, 33, False)]]
+    runs = [_run("opspilot-eval-1", Arm.PLAIN, applied_s=60)]
+    md = render(summarize(runs, {}), recs, generated_at=WHEN)
+    assert "| 5 | 5 | 6 | 10 | 33 (culprit missed) |" in md

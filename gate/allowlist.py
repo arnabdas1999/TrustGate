@@ -1,7 +1,8 @@
 """Read allowlist for the investigator. Default deny.
 
 Only the names below can be read through POST /gate/read: explicit MCP tool names (never a
-"list_*" or "get_*" pattern) plus two gate-native reads served by the Flagsmith CLI or SDK.
+"list_*" or "get_*" pattern) plus two reads the gate serves itself (the edge environment
+document over HTTP, and its own audit trail).
 Anything else is refused, including read-only tools we chose not to expose (organisation
 listings, code references) and every tool Flagsmith adds later. Writes never go through
 here: they go through /gate/write with a signed, single-use approval.

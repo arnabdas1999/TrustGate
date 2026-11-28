@@ -20,18 +20,22 @@ Six pre-registered eval incidents (3 OpsPilot, 3 VaultGuard), each a 4- or 5-fla
 hidden bad change, run on local models (`qwen3:14b`, `qwen3:8b`) against a real Flagsmith test
 environment. Full table, per-case numbers and what it doesn't show: [`bench/results.md`](bench/results.md).
 
-| | Plain delta debugging | TrustGate (LLM-guided) |
-| --- | --- | --- |
-| Repairs written to Flagsmith and verified | 6 of 6 | 6 of 6 |
-| Human active time per fix (median) | 11 s | 5 s |
-| Release cost saving kept (median; a global rollback keeps 0%) | 95% | 95% |
-| Final fixes failing a fresh validation | 0 of 6 | 0 of 6 |
-| Unattended time to an applied fix | 11–14 min | 12–21 min |
+| | TrustGate (plain ddmin) | TrustGate + LLM ranking | Global rollback |
+| --- | --- | --- | --- |
+| Repairs written to Flagsmith and verified | 6 of 6 | 6 of 6 | (sandbox only) |
+| Flags reverted per fix | 1 | 1 | 4–5 |
+| Held-out cases passing | all | all | all (21/21, 18/18) |
+| Human active time per fix (median) | 11 s | 5 s | none |
+| Release cost saving kept (median) | 95% | 95% | 0% |
+| Final fixes failing a fresh validation | 0 of 6 | 0 of 6 | — |
+| Unattended time to an applied fix | 11–14 min | 12–21 min | — |
 
 Every repair was the narrowest one: a single flag reverted for a single segment, with the rest of
-the release kept. The LLM ranking sped up single-flag cases and slowed the two-flag interaction
-cases (see Limits). The manual arm, global rollback and the scaling test are reported in
-`bench/results.md`.
+the release kept. Search stays small as releases grow: plain delta debugging found the culprit
+in 5, 6 and 7 search runs at 5, 10 and 20 changed flags on OpsPilot (10, 11 and 12 for
+VaultGuard's two-flag interaction). **The LLM ranking didn't pay off:** it helped two
+single-flag cases and was slower everywhere else, including every size of the scaling test
+(Deviation 4, Limits). The manual arm is reported in `bench/results.md` once it has run.
 
 ## The interface
 
@@ -55,7 +59,7 @@ flowchart LR
     AG -- "failure" --> INC["Incident capture<br/>(flags it received, traits, DB, trace)"]
     INC --> ORCH["Orchestrator"]
     ORCH --> INV["Investigator (LLM)<br/>no Flagsmith key"]
-    INV -- "allowlisted reads" --> GATE
+    ORCH -- "environment document<br/>(read through the gate)" --> GATE
     ORCH --> SB["Sandbox replays<br/>captured config + overrides"]
     SB --> GR["Deterministic grader<br/>(database, not the agent's word)"]
     GR --> SEARCH["Delta debugging<br/>+ repair validation"]
@@ -68,6 +72,7 @@ flowchart LR
     VER -- "server-side key" --> FS
     CC["Claude Code / Cursor"] -- "MCP, no write tools" --> MCPS["TrustGate MCP server"]
     MCPS --> API
+    MCPS -- "allowlisted reads" --> GATE
 ```
 
 1. A Flagsmith release changes several flags that control an AI agent (model, prompt, tools).
@@ -89,7 +94,7 @@ diagnose and no way to apply a fix.
 | --- | --- | --- |
 | Server-side SDK, per-request flags with traits | The agents get model, prompt, tools, step limit and context from Flagsmith for each request; traits (`env`, `tier`, `amount_usd`, `new_vendor`) set in code | `sandbox/live.py` |
 | Segments and segment overrides | Repairs are scoped to `tier0_production` or `high_value_wires`, so everyone else keeps the release | `search/repair.py`, `gate/writer.py` |
-| Hosted MCP server | All investigator reads (8 allowlisted tools) and the one approved write | `gate/allowlist.py`, `gate/service.py` |
+| Hosted MCP server | The one approved write; the gate's id lookups for it; and 8 allowlisted reads that TrustGate's own MCP server offers Claude Code | `gate/writer.py`, `gate/allowlist.py`, `gate/service.py` |
 | v2 feature versioning | Each approved change is one `create_environment_feature_version`, its description carrying the proposal and approval ids | `gate/writer.py` |
 | Edge environment document | Release diff and the gate's stale-state fingerprint; a write is refused if Flagsmith changed since the proposal | `scripts/release.py`, `gate/fingerprint.py` |
 | Admin API environment document | Typed flag values for the release snapshots | `scripts/release.py` |
@@ -118,8 +123,10 @@ proposal is registered with the gate at its fingerprint. A write is refused (409
 Flagsmith has changed since.
 
 **MCP for reads.** The gate talks to the hosted Flagsmith MCP server
-(`https://mcp.flagsmith.com/mcp`), which exposes 54 tools. The investigator can use 8 of
-them, by exact name, plus two reads the gate serves itself:
+(`https://mcp.flagsmith.com/mcp`), which exposes 54 tools. The gate allows 8 of them for
+reads, by exact name, plus two reads it serves itself. TrustGate's MCP server offers these reads
+to Claude Code; the orchestrator itself reads only the environment document. The gate also uses
+`list_project_features` and `list_project_segments` to look up the ids a write needs:
 - `get_environment_document`: the canonical edge document
 - `get_audit_log`: the gate's own trail
 
@@ -259,7 +266,7 @@ the organisation key, and it writes only an exact, human-approved change.
 
 | Component | Holds | Can do |
 |---|---|---|
-| Investigator agent (LLM) | No Flagsmith key | Allowlisted reads through the gate; start sandbox replays; draft proposals |
+| Investigator agent (LLM) | No Flagsmith key | Rank suspects (when asked) and word the card from the incident; no Flagsmith reads of its own. The orchestrator reads the environment document through the gate |
 | TrustGate MCP server | No key, no write tools | Start and follow investigations; allowlisted reads via the gate; return a proposal and its approval link |
 | API | Approval signing secret; approver password session | Sign a single-use approval when a logged-in human approves |
 | Gate (separate process) | Organisation API key; server-side keys; signing secret | Allowlisted reads; one approved write at a time |
@@ -575,6 +582,15 @@ statistical claims. Expectations that fail are reported as failed.
    test uses the same ranking model and settings (thinking on, the same token budget). Effect:
    the remaining guided runs use one fixed ranking setup for every case, chosen before seeing
    any of their results.
+4. *Reporting the LLM ranking (decided Nov 28, after every automated run; docs only).* The
+   guided arm (LLM ranking) lost to plain delta debugging: median diagnostic runs 12.5 against
+   7.5, and more search runs at every scaling size (OpsPilot 6, 9, 8 against 5, 6, 7;
+   VaultGuard 33, 34, 35 against 10, 11, 12). The plan said what to do then: report it and
+   prefer the simple deterministic order. So results.md labels the arms "TrustGate (plain
+   ddmin)" and "TrustGate + LLM ranking", and expectation 4 is reported as failed. No search
+   code changed and nothing was re-run. The pre-registered expectations 1 to 3 are still judged
+   on the LLM-ranking arm, as registered. The code still defaults to guided mode; plain is one
+   argument (`mode: "plain"`).
 
 ## Limits and known issues
 

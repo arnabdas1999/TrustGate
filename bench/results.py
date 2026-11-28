@@ -50,8 +50,8 @@ ARM_ORDER = [Arm.MANUAL, Arm.GLOBAL_ROLLBACK, Arm.PLAIN, Arm.GUIDED]
 ARM_LABELS = {
     Arm.MANUAL: "Manual",
     Arm.GLOBAL_ROLLBACK: "Global rollback",
-    Arm.PLAIN: "Plain ddmin",
-    Arm.GUIDED: "TrustGate",
+    Arm.PLAIN: "TrustGate (plain ddmin)",  # Deviation 4: labels only, no code or runs changed
+    Arm.GUIDED: "TrustGate + LLM ranking",
 }
 SCALING_ARMS = [Arm.PLAIN, Arm.GUIDED]
 SCALING_SIZES = [5, 10, 20]
@@ -398,10 +398,12 @@ def _cells(summary: dict[str, Any]) -> list[tuple[str, list[str]]]:
 
 
 HELD, FAILED, PENDING_VERDICT = "held", "failed", "pending"
-E1 = "1. TrustGate needs less human active time than the manual arm."
-E2 = ("2. TrustGate keeps more of the release's cost saving than global rollback, with no more "
-      "held-out failures.")
-E3 = "3. TrustGate finds two-flag interactions more often than the manual arm."
+E1 = ("1. TrustGate (LLM ranking, as registered) needs less human active time than the "
+      "manual arm.")
+E2 = ("2. TrustGate (LLM ranking, as registered) keeps more of the release's cost saving than "
+      "global rollback, with no more held-out failures.")
+E3 = ("3. TrustGate (LLM ranking, as registered) finds two-flag interactions more often than "
+      "the manual arm.")
 E4 = "4. Guided search needs fewer search runs than plain at 10 and 20 changed flags."
 
 
@@ -453,6 +455,31 @@ def expectations(summary: dict[str, Any], scale: dict[int, dict[str, dict[str, A
     return out
 
 
+SCALING_DOMAINS = ("opspilot", "vaultguard")
+DOMAIN_LABELS = {"opspilot": "OpsPilot", "vaultguard": "VaultGuard"}
+
+
+def _scaling_by_domain(records: Sequence[ScalingRecord]) -> list[list[str]]:
+    """One row per release size, one cell per (domain, arm): the median search runs, marked when
+    the culprit was not found."""
+    rows = []
+    for size in SCALING_SIZES:
+        cells = []
+        for domain in SCALING_DOMAINS:
+            for arm in SCALING_ARMS:
+                hits = [r for r in records if r.release_size == size and r.arm == arm
+                        and r.case.startswith(f"scaling-{domain}-")]
+                if not hits:
+                    cells.append(EMPTY)
+                    continue
+                cell = fmt_number(_median([r.search_runs for r in hits]))
+                if not all(r.found_culprit for r in hits):
+                    cell += " (culprit missed)"
+                cells.append(cell)
+        rows.append([str(size), *cells])
+    return rows
+
+
 def _case_rows(rows: list[dict[str, Any]]) -> list[list[str]]:
     def correct(v: bool | None) -> str:
         return EMPTY if v is None else ("yes" if v else "no")
@@ -484,7 +511,8 @@ def render(
     when = (generated_at or datetime.now(UTC)).astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
     arms = summary["arms"]
     counts = [arms[a.value]["n"] for a in ARM_ORDER]
-    scale = scaling if isinstance(scaling, dict) else summarize_scaling(scaling)
+    scaling_records = None if isinstance(scaling, dict) else list(scaling)
+    scale = scaling if scaling_records is None else summarize_scaling(scaling_records)
 
     out = [
         "# TrustGate benchmark results",
@@ -514,7 +542,13 @@ def render(
             )
         scale_rows.append([str(size), *cells])
     out += _table(["Release size"] + [ARM_LABELS[a] for a in SCALING_ARMS], scale_rows)
-    out += ["", "Cell: median search runs (n = number of searches).", ""]
+    out += ["", "Cell: median search runs over both domains (n = number of searches).", ""]
+    if scaling_records:
+        out += ["By domain (search runs; one search per cell):", ""]
+        out += _table(["Release size"] + [f"{DOMAIN_LABELS[d]}: {ARM_LABELS[a]}"
+                                          for d in SCALING_DOMAINS for a in SCALING_ARMS],
+                      _scaling_by_domain(scaling_records))
+        out += [""]
 
     out += ["## What this shows", ""]
     out += _table(["Pre-registered expectation", "Verdict", "Numbers"],
