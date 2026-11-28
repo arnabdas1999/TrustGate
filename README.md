@@ -410,9 +410,34 @@ the write, TrustGate first runs 3. If all 3 behaved identically, it stops there 
 one behaviour observed; if they differ, it tops up to the full count above. Runs are always
 fresh. On the scripted OpsPilot case this cuts an investigation from 104 replays to 66.
 
+**Baseline held-out cache** (opt-in, `SEARCH_HELDOUT_CACHE=1`). A repair is judged against the
+baseline's result on the held-out cases. That result is the same in every investigation of a
+release, so with the cache on it is measured once per API process and reused: 21 of an OpsPilot
+investigation's 59 replays. Only a complete, passing baseline measurement is kept, and the key
+is the domain, the cases, the baseline configuration and the two models. The repair's own
+held-out runs are always fresh. The eval ran with the cache off.
+
+**After a write.** `python -m sandbox.live --post-write 3 --key-var <ser. key variable>` asks the
+Flagsmith SDK for the incident identity's flags (traits set in code, so the segment override
+applies) and runs the incident case on them 3 times. It exits 1 if any run fails or if a flag
+came from the default handler. The API does not call it yet: there, VERIFIED still means the
+fix is served and is in the environment document.
+
 **Scaling.** `python -m search.scaling` measures search runs for releases of 5, 10 and 20 changes
 (the 5 real ones plus harmless flags the agents read), in plain or guided order. Trying every
 combination would take 2^N configurations × 3 runs: 96, 3,072 and 3,145,728.
+
+Measured on the local models (`bench/records/scaling.jsonl`, one search per cell), search runs
+at 5 / 10 / 20 changes:
+
+| Domain | Culprit | Plain | Guided |
+|---|---|---|---|
+| OpsPilot | one flag | 5 / 6 / 7 | 6 / 9 / 8 |
+| VaultGuard | two flags that interact | 10 / 11 / 12 | 33 / 34 / 35 |
+
+The culprit was found in all 12 searches. In plain order, each doubling of the release costs
+one more search run, and the OpsPilot numbers equal the synthetic oracle's. Guided order was
+worse at every size, most on VaultGuard, where the ranking separated the two interacting flags.
 
 ## Benchmark
 

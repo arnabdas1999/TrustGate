@@ -531,3 +531,52 @@ def test_adaptive_engine_uses_far_fewer_runs(tmp_path, monkeypatch):
     assert fast.runs_used < full.runs_used * 0.6
     monkeypatch.setenv("SEARCH_ADAPTIVE", "1")
     assert SandboxSearch().adaptive is True
+
+
+# -- baseline held-out cache (opt-in) ----------------------------------------------------------
+
+
+def test_heldout_cache_reuses_the_baseline_only():
+    from search import repair
+
+    repair.clear_baseline_cache()
+    try:
+        first_engine, second_engine = synthetic_engine(prompt_fast), synthetic_engine(prompt_fast)
+        first_engine.heldout_cache = second_engine.heldout_cache = True
+        first = first_engine.run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+        second = second_engine.run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+        # the second investigation skips the baseline's 2 cases x 3 runs and nothing else
+        assert second.runs_used == first.runs_used - 6
+        a, b = choose_candidate(first.candidates), choose_candidate(second.candidates)
+        assert (b.kind, b.heldout_passes, b.heldout_runs, b.baseline_heldout_passes) == \
+            (a.kind, a.heldout_passes, a.heldout_runs, a.baseline_heldout_passes)
+        assert b.heldout_runs == 6  # the repair's own held-out runs are fresh
+    finally:
+        repair.clear_baseline_cache()
+
+
+def test_heldout_cache_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("SEARCH_HELDOUT_CACHE", raising=False)
+    first = synthetic_engine(prompt_fast).run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+    second = synthetic_engine(prompt_fast).run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+    assert second.runs_used == first.runs_used
+    monkeypatch.setenv("SEARCH_HELDOUT_CACHE", "1")
+    assert synthetic_engine(prompt_fast).heldout_cache is True
+
+
+def test_heldout_cache_never_keeps_a_failing_or_other_baseline():
+    from search import repair
+    from search.engine import _baseline_key
+
+    repair.clear_baseline_cache()
+    try:
+        failing = synthetic_engine(prompt_fast, heldout_fails=lambda v, c: True)
+        failing.heldout_cache = True
+        failing.run(incident(), SUSPECTS, InvestigationMode.PLAIN)
+        assert repair._BASELINE_CACHE == {}  # a baseline that fails held-out is measured again
+        base = FlagConfig(values=dict(BASELINE), source="override")
+        other = FlagConfig(values={**BASELINE, "agent_max_steps": 99}, source="override")
+        assert _baseline_key(incident(), ["h1"], base) != _baseline_key(incident(), ["h1"], other)
+        assert _baseline_key(incident(), ["h1"], base) != _baseline_key(incident(), ["h2"], base)
+    finally:
+        repair.clear_baseline_cache()

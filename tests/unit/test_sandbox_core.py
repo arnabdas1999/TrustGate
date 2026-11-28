@@ -293,3 +293,39 @@ def test_replay_matrix_and_overrides(monkeypatch, tmp_path, capsys):
 
 def test_good_hero_helper_is_used():
     assert good_hero()[-2].calls[0].name == "report_status"
+
+
+def test_post_write_check_runs_on_served_flags(tmp_path):
+    ops = adapter(tmp_path=tmp_path / "w")
+    repaired = {**flags.RELEASE, "agent_prompt_version": "v1_strict"}
+    client = FakeClient(FakeFlags(repaired))
+    check = live.post_write_check(ops, "hero", client, runs=3,
+                                  expect={"agent_prompt_version": "v1_strict"})
+    assert check.ok and (check.passes, check.runs) == (3, 3) and check.violations == []
+    assert client.calls == [("payments-prod", {"env": "prod", "tier": 0})]
+    bad = live.post_write_check(ops, "hero", FakeClient(FakeFlags(flags.RELEASE)), runs=2)
+    assert not bad.ok and bad.passes == 0 and "restart_without_change_window" in bad.violations
+
+
+def test_post_write_check_refuses_defaults_and_wrong_values(tmp_path):
+    ops = adapter(tmp_path=tmp_path / "w")
+    defaulted = live.post_write_check(
+        ops, "hero", FakeClient(FakeFlags(flags.BASELINE, defaulted=["agent_model"])))
+    assert not defaulted.ok and defaulted.runs == 0 and defaulted.defaulted == ["agent_model"]
+    wrong = live.post_write_check(ops, "hero", FakeClient(FakeFlags(flags.RELEASE)),
+                                  expect={"agent_prompt_version": "v1_strict"})
+    assert not wrong.ok and wrong.runs == 0 and wrong.mismatched == ["agent_prompt_version"]
+
+
+def test_live_cli_post_write(monkeypatch, capsys, tmp_path):
+    import sandbox
+
+    monkeypatch.setattr(sandbox, "get_adapter", lambda d: adapter(tmp_path=tmp_path / "w"))
+    monkeypatch.setenv("BENCH_KEY", "ser.test")
+    repaired = {**flags.RELEASE, "agent_prompt_version": "v1_strict"}
+    args = ["--post-write", "2", "--key-var", "BENCH_KEY"]
+    assert live.main(args, client_factory=lambda k: FakeClient(FakeFlags(repaired))) == 0
+    assert "post-write: 2/2 passed" in capsys.readouterr().out
+    assert live.main(args, client_factory=lambda k: FakeClient(FakeFlags(flags.RELEASE))) == 1
+    monkeypatch.delenv("BENCH_KEY")
+    assert live.main(args, client_factory=lambda k: None) == 2

@@ -14,6 +14,7 @@ Flagsmith is never touched, and the model under test is never swapped.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -91,7 +92,8 @@ class SandboxSearch:
     def __init__(self, oracle_factory: Callable[[Incident], Oracle] | None = None, *,
                  heldout_cases: Callable[[Incident], list[str]] | None = None,
                  max_runs: int = MAX_RUNS, max_usd: float = 5.0, stop_at_first: bool = True,
-                 validate_repairs: bool = True, adaptive: bool | None = None):
+                 validate_repairs: bool = True, adaptive: bool | None = None,
+                 heldout_cache: bool | None = None):
         self.oracle_factory = oracle_factory or _sandbox_oracle
         self.heldout_cases = heldout_cases or _sandbox_heldout
         self.max_runs, self.max_usd, self.stop_at_first = max_runs, max_usd, stop_at_first
@@ -99,6 +101,10 @@ class SandboxSearch:
         # opt-in: SEARCH_ADAPTIVE=1 stops a phase after 3 identical runs (search/testing.py)
         self.adaptive = adaptive if adaptive is not None else \
             os.environ.get("SEARCH_ADAPTIVE", "").strip().lower() in ("1", "true", "yes")
+        # opt-in: SEARCH_HELDOUT_CACHE=1 measures the baseline's held-out result once per
+        # process and reuses it in later investigations of the same baseline (search/repair.py)
+        self.heldout_cache = heldout_cache if heldout_cache is not None else \
+            os.environ.get("SEARCH_HELDOUT_CACHE", "").strip().lower() in ("1", "true", "yes")
 
     def run(self, incident: Incident, suspects: Sequence[FlagChange],
             mode: InvestigationMode) -> SearchResult:
@@ -169,12 +175,22 @@ class SandboxSearch:
             segment = incident_segment(incident)
         except Exception:  # noqa: BLE001 (no segment: the segment option is skipped)
             segment = None
-        heldout = HeldOut(tester, self.heldout_cases(incident), baseline_cfg)
+        cases = self.heldout_cases(incident)
+        heldout = HeldOut(tester, cases, baseline_cfg,
+                          cache_key=_baseline_key(incident, cases, baseline_cfg)
+                          if self.heldout_cache else None)
         candidates = validate(tester, captured=captured, suspects=suspects, culprit=culprit,
                               segment=segment, heldout=heldout,
                               costs=CostRef(baseline_cost, release_cost),
                               stop_at_first=self.stop_at_first)
         return done(SearchOutcome.FOUND, culprit, candidates)
+
+
+def _baseline_key(incident: Incident, cases: Sequence[str], baseline: FlagConfig) -> tuple:
+    """Same domain, cases, baseline configuration and models: the same measurement."""
+    models = tuple(os.environ.get(v, "") for v in ("MODEL_CHEAP", "MODEL_FLAGSHIP"))
+    return (str(incident.domain), tuple(cases),
+            json.dumps(baseline.model_dump(mode="json"), sort_keys=True, default=str), models)
 
 
 def _per_run(obs: Observation | None) -> float | None:

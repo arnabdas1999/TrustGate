@@ -21,6 +21,7 @@ import shutil
 import sys
 import uuid
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -110,6 +111,55 @@ def run_live(adapter: SqliteDomain, case_id: str, client: ClientLike, **capture_
     return incident, trace, defaulted
 
 
+@dataclass
+class PostWriteCheck:
+    """What the agent did on the flags Flagsmith serves the incident's identity after a write."""
+    resolved: dict[str, Any]
+    runs: int = 0
+    passes: int = 0
+    violations: list[str] = field(default_factory=list)   # distinct, in order seen
+    statuses: list[str | None] = field(default_factory=list)
+    defaulted: list[str] = field(default_factory=list)    # served by the default handler
+    mismatched: list[str] = field(default_factory=list)   # not the value the repair expects
+
+    @property
+    def ok(self) -> bool:
+        """Clean only if every flag came from Flagsmith with the expected value and every run
+        passed. Zero runs is never ok."""
+        return (self.runs > 0 and self.passes == self.runs and not self.violations
+                and not self.defaulted and not self.mismatched)
+
+
+def _same(a: Any, b: Any) -> bool:
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a is b
+    return a == b or str(a) == str(b)
+
+
+def post_write_check(adapter: SqliteDomain, case_id: str, client: ClientLike, *, runs: int = 3,
+                     expect: Mapping[str, Any] | None = None) -> PostWriteCheck:
+    """After an approved write: resolve the incident identity's flags through the Flagsmith
+    SDK (traits from code, so segment overrides apply) and run the incident case on them, fresh,
+    `runs` times. `expect` is the flag values the repair should serve this identity; a
+    difference, or a flag served by the default handler, fails the check before any run."""
+    identity = adapter.identity(case_id)
+    resolved, defaulted = resolve(client, identity)
+    check = PostWriteCheck(resolved=dict(resolved.values), defaulted=defaulted)
+    check.mismatched = [k for k, v in (expect or {}).items()
+                        if not _same(resolved.values.get(k), v)]
+    if check.defaulted or check.mismatched:
+        return check
+    for _ in range(runs):
+        db = adapter.reset_state(case_id)
+        trace = adapter.run_agent(case_id, resolved, identity, db)
+        grade = adapter.grade(trace, db)
+        check.runs += 1
+        check.passes += int(not grade.violations and grade.success)
+        check.statuses.append(trace.reported_status)
+        check.violations += [v for v in grade.violations if v not in check.violations]
+    return check
+
+
 def main(argv: list[str] | None = None,
          client_factory: Callable[[str], ClientLike] = make_client) -> int:
     from sandbox import get_adapter
@@ -117,15 +167,31 @@ def main(argv: list[str] | None = None,
     p = argparse.ArgumentParser(description="Run a demo agent once on live Flagsmith flags.")
     p.add_argument("--domain", default="opspilot")
     p.add_argument("--case", default="hero")
-    p.add_argument("--baseline-snapshot", required=True)
-    p.add_argument("--release-snapshot", required=True)
+    p.add_argument("--baseline-snapshot")
+    p.add_argument("--release-snapshot")
+    p.add_argument("--post-write", type=int, metavar="RUNS", default=0,
+                   help="after a write: run the case RUNS times on the served flags; "
+                        "exit 1 unless all pass")
+    p.add_argument("--key-var", help="env var holding the ser. key (default: the domain's Prod)")
     p.add_argument("--name", help="incident name, e.g. the bench case opspilot-eval-1")
     args = p.parse_args(argv)
     adapter = get_adapter(args.domain)
-    key = os.environ.get(SERVER_KEY_VARS[adapter.domain], "")
+    key_var = args.key_var or SERVER_KEY_VARS[adapter.domain]
+    key = os.environ.get(key_var, "")
     if not key:
-        print(f"{SERVER_KEY_VARS[adapter.domain]} is not set", file=sys.stderr)
+        print(f"{key_var} is not set", file=sys.stderr)
         return 2
+    if args.post_write:
+        check = post_write_check(adapter, args.case, client_factory(key), runs=args.post_write)
+        print(f"served flags: {check.resolved}")
+        if check.defaulted:
+            print(f"NOT CHECKED: served by the default handler (Flagsmith unreachable?): "
+                  f"{check.defaulted}")
+        print(f"post-write: {check.passes}/{check.runs} passed; violations: "
+              f"{check.violations or 'none'}; statuses: {check.statuses}")
+        return 0 if check.ok else 1
+    if not (args.baseline_snapshot and args.release_snapshot):
+        p.error("--baseline-snapshot and --release-snapshot are required to capture")
     incident, trace, defaulted = run_live(adapter, args.case, client_factory(key),
                                           baseline_snapshot=args.baseline_snapshot,
                                           release_snapshot=args.release_snapshot,
