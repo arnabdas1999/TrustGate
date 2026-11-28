@@ -10,8 +10,9 @@ the timeout passes (60 s by default; the edge lags a write by a few seconds).
 
 A value from a default handler (`is_default`) never counts, so a network blip can't pass as a
 verified fix. The source here is the edge identities endpoint (remote evaluation, transient
-identity, nothing stored). It matches what the Flagsmith SDK's local evaluation resolves.
-The Python SDK isn't a dependency yet, and anything that implements FlagSource can replace this.
+identity, nothing stored). It matches what the Flagsmith SDK's local evaluation resolves (the
+SDK itself is used by the live agent path, sandbox/live.py). Anything that implements FlagSource
+can replace this.
 """
 
 from __future__ import annotations
