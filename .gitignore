@@ -16,6 +16,7 @@ data/
 *.sqlite
 *.sqlite3
 *.jsonl
+!bench/records/*.jsonl
 
 # Python
 __pycache__/

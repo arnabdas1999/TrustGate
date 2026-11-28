@@ -1,0 +1,10 @@
+[
+  {
+    "investigation_id": "inv_2bf932164f8a",
+    "reason": "Run before Deviation 3: with qwen3:8b the guided ranking returned the suspects in the order shown, so this run tested the same configurations as plain (59 runs each). Reported as a finding; the case was re-run under Deviation 3 (inv_8dcf65a250c9)."
+  },
+  {
+    "investigation_id": "inv_b6e7b8812cb5",
+    "reason": "The proposal expired because the approver was away for 15 minutes; nothing was written to Flagsmith. A procedure failure, not a TrustGate result; the case was re-run (inv_8dcf65a250c9)."
+  }
+]

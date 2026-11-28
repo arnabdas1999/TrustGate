@@ -8,6 +8,8 @@ Inputs:
   manual_log.csv   the timer's log of the manual arm, converted to RunRecords here
   scaling.jsonl    ScalingRecords (search runs by release size)
   bench/keys/      sealed answer keys; attribution rows stay "pending" until they exist
+  excluded.json    records kept in runs.jsonl but left out of the arm totals, each with its
+                   reason (e.g. a run redone under a deviation); results.md lists them
 
 summarize() and render() are pure, so tests call them directly.
 """
@@ -29,6 +31,7 @@ from pydantic import ValidationError
 from bench.records import (
     MANUAL_LOG,
     MANUAL_LOG_COLUMNS,
+    RECORDS_DIR,
     RUNS_FILE,
     SCALING_FILE,
     Arm,
@@ -40,6 +43,7 @@ from bench.records import (
 BENCH_DIR = Path(__file__).resolve().parent
 KEYS_DIR = BENCH_DIR / "keys"
 RESULTS_FILE = BENCH_DIR / "results.md"
+EXCLUDED_FILE = RECORDS_DIR / "excluded.json"
 
 ARM_ORDER = [Arm.MANUAL, Arm.GLOBAL_ROLLBACK, Arm.PLAIN, Arm.GUIDED]
 ARM_LABELS = {
@@ -174,6 +178,14 @@ def load_runs(runs_path: Path, manual_path: Path) -> list[RunRecord]:
     return list(read(runs_path, RunRecord)) + load_manual_log(manual_path)
 
 
+def load_excluded(path: Path) -> dict[str, str]:
+    """investigation_id -> reason, for records kept in runs.jsonl but not counted in an arm."""
+    if not path.is_file():
+        return {}
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    return {e["investigation_id"]: e["reason"] for e in entries}
+
+
 # ---------------------------------------------------------------- calculation
 
 
@@ -192,6 +204,15 @@ def unnecessary_reverts(run: RunRecord, key: Key) -> int:
 
 def _ms(start: datetime, end: datetime) -> float:
     return (end - start).total_seconds() * 1000
+
+
+def active_ms(run: RunRecord) -> int | None:
+    """Human active time, or None when it was not measured. An automated run that reached an
+    approval cannot take 0 ms of human time: 0 there means the UI timer missed the approval
+    (an idle or unfocused tab), so it counts as missing, not as instant."""
+    if run.human_active_ms == 0 and run.arm != Arm.MANUAL and not run.unsolved:
+        return None
+    return run.human_active_ms
 
 
 def _median(values: Sequence[float]) -> float | None:
@@ -213,8 +234,9 @@ def summarize_arm(runs: Sequence[RunRecord], keys: dict[str, Key]) -> dict[str, 
         "unsolved": len(runs) - len(solved),
         "keyed": len(keyed),
         "human_active_ms_median": _median(
-            [r.human_active_ms for r in solved if r.human_active_ms is not None]
+            [a for r in solved if (a := active_ms(r)) is not None]
         ),
+        "human_active_missing": sum(1 for r in solved if active_ms(r) is None),
         "cost_kept_median": _median([r.cost_kept for r in runs if r.cost_kept is not None]),
         "unnecessary_reverts_mean": (
             statistics.fmean(unnecessary_reverts(r, k) for r, k in keyed_solved)
@@ -240,8 +262,16 @@ def summarize_arm(runs: Sequence[RunRecord], keys: dict[str, Key]) -> dict[str, 
     }
 
 
-def summarize(runs: Iterable[RunRecord], keys: dict[str, Key]) -> dict[str, Any]:
-    runs = list(runs)
+def summarize(runs: Iterable[RunRecord], keys: dict[str, Key],
+              excluded: dict[str, str] | None = None) -> dict[str, Any]:
+    excluded = excluded or {}
+    all_runs = list(runs)
+    runs = [r for r in all_runs if r.investigation_id not in excluded]
+    set_aside = [
+        {"case": r.case, "arm": r.arm.value, "investigation_id": r.investigation_id,
+         "reason": excluded[r.investigation_id]}
+        for r in all_runs if r.investigation_id in excluded
+    ]
     arms = {
         arm.value: summarize_arm([r for r in runs if r.arm == arm], keys) for arm in ARM_ORDER
     }
@@ -250,6 +280,7 @@ def summarize(runs: Iterable[RunRecord], keys: dict[str, Key]) -> dict[str, Any]
         "keys_present": bool(keys),
         "total_runs": len(runs),
         "keyed_runs": sum(1 for r in runs if r.case in keys),
+        "excluded": set_aside,
     }
 
 
@@ -390,6 +421,19 @@ def render(
     out.append(
         f"- Unsolved runs count toward n but are excluded from time medians (unsolved: {unsolved})."
     )
+    missing = [(a, arms[a.value]["human_active_missing"]) for a in ARM_ORDER]
+    if any(m for _, m in missing):
+        out.append(
+            "- Human active time was not measured on "
+            + ", ".join(f"{m} {ARM_LABELS[a]} run{'s' if m > 1 else ''}" for a, m in missing if m)
+            + ": the UI timer recorded 0 ms for an approval made from an idle or unfocused tab. "
+            "Those runs are left out of that median, not counted as instant."
+        )
+    for e in summary.get("excluded", []):
+        out.append(
+            f"- Kept in the records but not in the {ARM_LABELS[Arm(e['arm'])]} totals: "
+            f"{e['case']} ({e['investigation_id']}). {e['reason']}"
+        )
     if not summary["keys_present"]:
         out.append(
             "- Attribution rows (unnecessary reverts, interaction cases, time to first correct "
@@ -417,6 +461,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--manual", type=Path, default=MANUAL_LOG)
     parser.add_argument("--scaling", type=Path, default=SCALING_FILE)
     parser.add_argument("--keys", type=Path, default=KEYS_DIR)
+    parser.add_argument("--excluded", type=Path, default=EXCLUDED_FILE)
     parser.add_argument("--out", type=Path, default=RESULTS_FILE)
     args = parser.parse_args(argv)
 
@@ -424,7 +469,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         runs = load_runs(args.runs, args.manual)
     except ManualLogError as exc:
         sys.exit(f"error: {exc}")
-    summary = summarize(runs, load_keys(args.keys))
+    summary = summarize(runs, load_keys(args.keys), load_excluded(args.excluded))
     markdown = render(summary, read(args.scaling, ScalingRecord))
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(markdown, encoding="utf-8", newline="\n")
