@@ -81,13 +81,16 @@ def guided_order(suspects: list[FlagChange], trace=None, llm=None, env=None
     """The investigator's suspect ranking (agent.ordering, Naman's), as the guided arm uses it.
     Falls back to diff order, and says so, when the LLM is unavailable."""
     from agent.llm import investigator_model, llm_from_env
-    from agent.ordering import order_suspects
+    from agent.ordering import MAX_TOKENS, order_suspects
+    from orchestrator.wiring import ranking_client  # imported here: no cycle at import time
 
-    llm = llm if llm is not None else llm_from_env(env)
+    client = ranking_client(env)  # the orchestrator's ranking client: thinking on, 2048 tokens
+    llm = llm if llm is not None else client.get("ordering_llm") or llm_from_env(env)
     model = investigator_model(env)  # the same ranking model as the orchestrator's guided arm
     if not model:
         raise ValueError("no investigator model configured (set MODEL_FLAGSHIP)")
-    ordering = order_suspects(suspects, trace, InvestigationMode.GUIDED, llm, model=model)
+    ordering = order_suspects(suspects, trace, InvestigationMode.GUIDED, llm, model=model,
+                              max_tokens=client.get("ordering_max_tokens", MAX_TOKENS))
     return list(ordering.suspects), ordering.source
 
 
