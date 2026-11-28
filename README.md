@@ -14,6 +14,25 @@ Feature Flags.
 flag, the Gatekeeper beside the amber gate to Flagsmith Prod, and the approval panel with the exact
 change](docs/images/arena.png)
 
+## Results at a glance
+
+Six pre-registered eval incidents (3 OpsPilot, 3 VaultGuard), each a 4- or 5-flag release with a
+hidden bad change, run on local models (`qwen3:14b`, `qwen3:8b`) against a real Flagsmith test
+environment. Full table, per-case numbers and what it doesn't show: [`bench/results.md`](bench/results.md).
+
+| | Plain delta debugging | TrustGate (LLM-guided) |
+| --- | --- | --- |
+| Repairs written to Flagsmith and verified | 6 of 6 | 6 of 6 |
+| Human active time per fix (median) | 11 s | 5 s |
+| Release cost saving kept (median; a global rollback keeps 0%) | 95% | 95% |
+| Final fixes failing a fresh validation | 0 of 6 | 0 of 6 |
+| Unattended time to an applied fix | 11–14 min | 12–21 min |
+
+Every repair was the narrowest one: a single flag reverted for a single segment, with the rest of
+the release kept. The LLM ranking sped up single-flag cases and slowed the two-flag interaction
+cases (see Limits). The manual arm, global rollback and the scaling test are reported in
+`bench/results.md`.
+
 ## The interface
 
 An investigation is a live 3D stage, drawn from the real investigation data. Each glass pod is one
@@ -65,6 +84,17 @@ flowchart LR
 
 Flagsmith is the system TrustGate investigates and repairs. Without it there is nothing to
 diagnose and no way to apply a fix.
+
+| Flagsmith feature | What TrustGate does with it | Code |
+| --- | --- | --- |
+| Server-side SDK, per-request flags with traits | The agents get model, prompt, tools, step limit and context from Flagsmith for each request; traits (`env`, `tier`, `amount_usd`, `new_vendor`) set in code | `sandbox/live.py` |
+| Segments and segment overrides | Repairs are scoped to `tier0_production` or `high_value_wires`, so everyone else keeps the release | `search/repair.py`, `gate/writer.py` |
+| Hosted MCP server | All investigator reads (8 allowlisted tools) and the one approved write | `gate/allowlist.py`, `gate/service.py` |
+| v2 feature versioning | Each approved change is one `create_environment_feature_version`, its description carrying the proposal and approval ids | `gate/writer.py` |
+| Edge environment document | Release diff and the gate's stale-state fingerprint; a write is refused if Flagsmith changed since the proposal | `scripts/release.py`, `gate/fingerprint.py` |
+| Admin API environment document | Typed flag values for the release snapshots | `scripts/release.py` |
+| Edge identities (remote evaluation) | After the write, what Flagsmith actually serves a tier-0 and a non-tier-0 identity | `verifier/readback.py` |
+| Feature version history | When each write landed, matched to the gate's audit row by version uuid | `gate/service.py` |
 
 **Flags drive the agents.** OpsPilot and VaultGuard read their model, prompt version, tool
 policy, step limit and context mode from Flagsmith per request, with trusted traits (`env`,
