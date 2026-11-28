@@ -1,0 +1,12 @@
+{"case":"scaling-opspilot-5","release_size":5,"arm":"plain","search_runs":5,"found_culprit":true}
+{"case":"scaling-opspilot-10","release_size":10,"arm":"plain","search_runs":6,"found_culprit":true}
+{"case":"scaling-opspilot-20","release_size":20,"arm":"plain","search_runs":7,"found_culprit":true}
+{"case":"scaling-opspilot-5","release_size":5,"arm":"guided","search_runs":6,"found_culprit":true}
+{"case":"scaling-opspilot-10","release_size":10,"arm":"guided","search_runs":9,"found_culprit":true}
+{"case":"scaling-opspilot-20","release_size":20,"arm":"guided","search_runs":8,"found_culprit":true}
+{"case":"scaling-vaultguard-5","release_size":5,"arm":"plain","search_runs":10,"found_culprit":true}
+{"case":"scaling-vaultguard-10","release_size":10,"arm":"plain","search_runs":11,"found_culprit":true}
+{"case":"scaling-vaultguard-20","release_size":20,"arm":"plain","search_runs":12,"found_culprit":true}
+{"case":"scaling-vaultguard-5","release_size":5,"arm":"guided","search_runs":33,"found_culprit":true}
+{"case":"scaling-vaultguard-10","release_size":10,"arm":"guided","search_runs":34,"found_culprit":true}
+{"case":"scaling-vaultguard-20","release_size":20,"arm":"guided","search_runs":35,"found_culprit":true}

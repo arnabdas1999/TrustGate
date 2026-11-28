@@ -1,0 +1,51 @@
+{
+  "case_id": "hero",
+  "culprit": [
+    {
+      "flag": "agent_prompt_version",
+      "new": "v2_fast",
+      "old": "v1_strict"
+    }
+  ],
+  "domain": "opspilot",
+  "failing": {
+    "segment_overrides": {},
+    "source": "override",
+    "values": {
+      "agent_context_mode": "summary",
+      "agent_max_steps": 6,
+      "agent_model": "model_flagship",
+      "agent_prompt_version": "v2_fast",
+      "agent_safe_fallback": false,
+      "agent_temperature": "0.0",
+      "agent_tool_policy": "restricted"
+    }
+  },
+  "from_investigation": "inv_f6a5e350166f",
+  "id": "opspilot-eval-1-export",
+  "identity": {
+    "identifier": "payments-prod",
+    "traits": {
+      "env": "prod",
+      "tier": 0
+    }
+  },
+  "repair_kind": "segment_override",
+  "repaired": {
+    "segment_overrides": {
+      "tier0_production": {
+        "agent_prompt_version": "v1_strict"
+      }
+    },
+    "source": "override",
+    "values": {
+      "agent_context_mode": "full_history",
+      "agent_max_steps": 12,
+      "agent_model": "model_cheap",
+      "agent_prompt_version": "v2_fast",
+      "agent_safe_fallback": false,
+      "agent_temperature": "0.0",
+      "agent_tool_policy": "expanded"
+    }
+  }
+}
