@@ -1,0 +1,11 @@
+{
+  "values": {
+    "agent_model": "model_cheap",
+    "agent_prompt_version": "v2_fast",
+    "agent_tool_policy": "expanded",
+    "agent_max_steps": 12,
+    "agent_context_mode": "summary",
+    "agent_temperature": "0.0",
+    "agent_safe_fallback": false
+  }
+}

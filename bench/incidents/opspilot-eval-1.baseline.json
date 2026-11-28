@@ -1,0 +1,11 @@
+{
+  "values": {
+    "agent_model": "model_flagship",
+    "agent_prompt_version": "v1_strict",
+    "agent_tool_policy": "restricted",
+    "agent_max_steps": 6,
+    "agent_context_mode": "summary",
+    "agent_temperature": "0.0",
+    "agent_safe_fallback": false
+  }
+}
