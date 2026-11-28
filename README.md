@@ -471,6 +471,14 @@ statistical claims. Expectations that fail are reported as failed.
    investigated by hand. Effect: an approver may already know the fix, so TrustGate's
    approval time can be shorter than a fresh reviewer's. Manual and automated runs never
    overlap on the Mac, so they do not compete for the model.
+2. *Adaptive stop on (decided Nov 28, after `cp7-prereg`, before any eval run).* Every eval run
+   of both automated arms uses `SEARCH_ADAPTIVE=1`. At temperature 0, repeated runs of one
+   configuration are usually identical, so 10 or 20 runs are one observation repeated; runs
+   that differ still get the full count, and every run is fresh (never the display cache). It
+   applies to reproduce, confirm, validate and post-write, not to the search phase, so search
+   run counts between plain and guided are unaffected. Reason: about 11 to 13 minutes per run
+   instead of about 29 on one Mac. Effect: a check that stops after 3 identical runs is weaker
+   evidence than 20, and the evidence line says "one behaviour observed" in that case.
 
 ## Limits and known issues
 
