@@ -414,6 +414,18 @@ fresh. On the scripted OpsPilot case this cuts an investigation from 104 replays
 (the 5 real ones plus harmless flags the agents read), in plain or guided order. Trying every
 combination would take 2^N configurations × 3 runs: 96, 3,072 and 3,145,728.
 
+Measured on the local models (`bench/records/scaling.jsonl`, one search per cell), search runs
+at 5 / 10 / 20 changes:
+
+| Domain | Culprit | Plain | Guided |
+|---|---|---|---|
+| OpsPilot | one flag | 5 / 6 / 7 | 6 / 9 / 8 |
+| VaultGuard | two flags that interact | 10 / 11 / 12 | 33 / 34 / 35 |
+
+The culprit was found in all 12 searches. In plain order, each doubling of the release costs
+one more search run, and the OpsPilot numbers equal the synthetic oracle's. Guided order was
+worse at every size, most on VaultGuard, where the ranking separated the two interacting flags.
+
 ## Benchmark
 
 Results: `bench/results.md`, generated from records by `uv run python -m bench.results` (it
