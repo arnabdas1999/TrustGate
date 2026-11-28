@@ -237,6 +237,17 @@ def llm_from_env(env: Mapping[str, str] | None = None) -> LLM:
     return DisabledLLM("no LLM provider configured")
 
 
+def investigator_model(env: Mapping[str, str] | None = None) -> str:
+    """The model for the guided ranking call: INVESTIGATOR_MODEL, else MODEL_FLAGSHIP, else
+    MODEL_CHEAP ("" if none is set). qwen3:8b echoed the suspect order in the eval, so the
+    ranking defaults to the flagship (pre-registration Deviation 3)."""
+    e = os.environ if env is None else env
+    for name in ("INVESTIGATOR_MODEL", "MODEL_FLAGSHIP", "MODEL_CHEAP"):
+        if e.get(name, "").strip():
+            return e[name].strip()
+    return ""
+
+
 def model_id(flag_value: str, env: Mapping[str, str] | None = None) -> str:
     """Map a provider-neutral flag value (model_cheap / model_flagship) to a real model id."""
     e = os.environ if env is None else env

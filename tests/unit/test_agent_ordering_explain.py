@@ -135,3 +135,58 @@ def test_explain_output_is_trimmed_and_capped():
     out = explain(culprit_set=[PROMPT], segment=None, chosen=OPTIONS[1], options=OPTIONS,
                   llm=FakeLLM(["word " * 400]), model="m", fallback="t")
     assert len(out.text) <= 600 and "  " not in out.text
+
+
+# --- shuffled presentation and echo detection (pre-registration Deviation 3) -----------------
+
+from agent.ordering import ECHO_NOTE, REVERSED_ECHO_NOTE, shown_order  # noqa: E402
+
+FIVE = [FlagChange(flag=f, old="a", new="b") for f in
+        ("agent_context_mode", "agent_max_steps", "agent_model", "agent_prompt_version",
+         "agent_tool_policy")]
+
+
+def _shown_in(prompt):
+    data = json.loads(prompt[prompt.index("<data>") + 6:prompt.rindex("</data>")])
+    return [c["flag"] for c in data["changed_flags"]]
+
+
+def test_shown_order_is_a_reproducible_seeded_shuffle():
+    a = [s.flag for s in shown_order(FIVE, "opspilot-eval-1-guided")]
+    assert a == [s.flag for s in shown_order(FIVE, "opspilot-eval-1-guided")]
+    assert sorted(a) == [s.flag for s in FIVE]
+    assert [s.flag for s in shown_order(FIVE, "")] == [s.flag for s in FIVE]  # no seed: as is
+    others = {tuple(s.flag for s in shown_order(FIVE, f"case-{i}")) for i in range(8)}
+    assert len(others) > 1  # the seed matters
+
+
+def test_the_llm_sees_the_shuffled_order():
+    llm = FakeLLM(['["agent_prompt_version"]'])
+    out = order_suspects(FIVE, _trace(), InvestigationMode.GUIDED, llm, model="m", seed="s1")
+    assert _shown_in(llm.prompts[0]) == out.extra["shown"]
+    assert out.extra["shown"] == [s.flag for s in shown_order(FIVE, "s1")]
+
+
+def test_an_echo_of_the_shown_order_is_kept_but_noted():
+    shown = [s.flag for s in shown_order(FIVE, "s1")]
+    out = order_suspects(FIVE, _trace(), InvestigationMode.GUIDED,
+                         FakeLLM([json.dumps(shown)]), model="m", seed="s1")
+    assert [s.flag for s in out.suspects] == shown
+    assert out.source == "llm" and out.note == ECHO_NOTE
+
+
+def test_a_reversed_echo_is_kept_but_noted():
+    shown = [s.flag for s in shown_order(FIVE, "s1")]
+    out = order_suspects(FIVE, _trace(), InvestigationMode.GUIDED,
+                         FakeLLM([json.dumps(shown[::-1])]), model="m", seed="s1")
+    assert [s.flag for s in out.suspects] == shown[::-1] and out.note == REVERSED_ECHO_NOTE
+
+
+def test_a_real_ranking_has_no_echo_note():
+    shown = [s.flag for s in shown_order(FIVE, "s1")]
+    ranking = ["agent_prompt_version", "agent_tool_policy"] + [
+        f for f in shown if f not in ("agent_prompt_version", "agent_tool_policy")]
+    assert ranking not in (shown, shown[::-1])
+    out = order_suspects(FIVE, _trace(), InvestigationMode.GUIDED,
+                         FakeLLM([json.dumps(ranking)]), model="m", seed="s1")
+    assert [s.flag for s in out.suspects] == ranking and out.note == ""

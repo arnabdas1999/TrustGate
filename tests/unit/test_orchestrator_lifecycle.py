@@ -896,3 +896,63 @@ def test_gate_read_error_at_verify_time_is_never_verified(setup):
     status = orch.verify_after_write("inv_1")
     assert status is not VerifyStatus.VERIFIED and status is VerifyStatus.TIMEOUT
     assert repo.get_investigation("inv_1").status is InvestigationStatus.FAILED
+
+
+# --- guided ranking uses the investigator model; the order is logged at WARNING --------------
+
+class ModelRecordingLLM(FakeLLM):
+    def __init__(self, answers):
+        super().__init__(answers)
+        self.models = []
+
+    def complete(self, prompt, *, model, max_tokens):
+        self.models.append(model)
+        return super().complete(prompt, model=model, max_tokens=max_tokens)
+
+
+def test_guided_ranks_with_the_ordering_model_and_explains_with_the_cheap_one(setup, caplog):
+    repo, gate, flagsrc, _ = setup
+    _guided(repo)
+    llm = ModelRecordingLLM(['["agent_prompt_version"]', "The prompt change breaks tier-0"])
+    orch = Orchestrator(repo=repo, gate=gate, search=ScriptedSearch(["agent_prompt_version"]),
+                        configs=CONFIG, flag_source=lambda env: flagsrc, sleep=lambda s: None,
+                        verify_timeout_s=0, llm=llm, llm_model="cheap-8b",
+                        ordering_model="flagship-14b")
+    with caplog.at_level("WARNING", logger="trustgate.orchestrator"):
+        orch.run("inv_1")
+    assert llm.models == ["flagship-14b", "cheap-8b"]  # ranking first, then the explanation
+    assert "suspect order from llm (model flagship-14b)" in caplog.text
+    assert "shown [" in caplog.text and "ranked ['agent_prompt_version'" in caplog.text
+
+
+def test_ordering_model_defaults_to_the_explanation_model(setup):
+    repo, gate, flagsrc, _ = setup
+    orch = Orchestrator(repo=repo, gate=gate, search=ScriptedSearch(["agent_prompt_version"]),
+                        configs=CONFIG, flag_source=lambda env: flagsrc, llm_model="m")
+    assert orch.ordering_model == "m"
+
+
+class TokenRecordingLLM(ModelRecordingLLM):
+    def __init__(self, answers):
+        super().__init__(answers)
+        self.max_tokens = []
+
+    def complete(self, prompt, *, model, max_tokens):
+        self.max_tokens.append(max_tokens)
+        return super().complete(prompt, model=model, max_tokens=max_tokens)
+
+
+def test_ranking_uses_its_own_client_and_token_budget(setup):
+    repo, gate, flagsrc, _ = setup
+    _guided(repo)
+    explain_llm = TokenRecordingLLM(["The prompt change breaks tier-0"])
+    rank_llm = TokenRecordingLLM(['["agent_prompt_version"]'])
+    orch = Orchestrator(repo=repo, gate=gate, search=ScriptedSearch(["agent_prompt_version"]),
+                        configs=CONFIG, flag_source=lambda env: flagsrc, sleep=lambda s: None,
+                        verify_timeout_s=0, llm=explain_llm, llm_model="cheap-8b",
+                        ordering_model="flagship-14b", ordering_llm=rank_llm,
+                        ordering_max_tokens=2048)
+    orch.run("inv_1")
+    assert (rank_llm.models, rank_llm.max_tokens) == (["flagship-14b"], [2048])
+    assert explain_llm.models == ["cheap-8b"] and explain_llm.max_tokens != [2048]
+    assert repo.get_investigation("inv_1").suspects[0].flag == "agent_prompt_version"

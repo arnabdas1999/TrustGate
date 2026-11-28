@@ -14,9 +14,11 @@ Environment (API container, .env):
 - TRUSTGATE_SEARCH: "scripted:<flag>,..." for the plumbing demo until search/ lands
 - LLM_PROVIDER: ollama (OLLAMA_URL or LLM_BASE_URL, default http://localhost:11434; under
   docker compose http://host.docker.internal:11434; no key), groq or gemini (LLM_API_KEY), or
-  openai (LLM_BASE_URL); see agent/llm.py. MODEL_CHEAP is the investigator's model (e.g.
-  qwen3:8b on Ollama). LLM_LIVE=0 switches
-  the LLM off (diff order and template explanations)
+  openai (LLM_BASE_URL); see agent/llm.py. MODEL_CHEAP writes the investigator's
+  explanations (e.g. qwen3:8b on Ollama, thinking off); the guided ranking call uses
+  INVESTIGATOR_MODEL, default MODEL_FLAGSHIP, with thinking on (INVESTIGATOR_THINK=0 turns it
+  off): see pre-registration Deviation 3. LLM_LIVE=0 switches the LLM off (diff order and
+  template explanations)
 """
 
 from __future__ import annotations
@@ -28,7 +30,8 @@ import threading
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from agent.llm import llm_from_env
+from agent.llm import investigator_model, llm_from_env
+from agent.ordering import THINKING_MAX_TOKENS
 from contracts.models import Domain, Identity
 from orchestrator.gate_client import GateClient
 from orchestrator.lifecycle import DomainConfig, Orchestrator
@@ -60,6 +63,18 @@ def server_key_name(environment: str) -> str:
 
 DEFAULT_PROJECT = "TrustGate"
 DEFAULT_ENVIRONMENTS = {Domain.OPSPILOT: "OpsPilot Prod", Domain.VAULTGUARD: "VaultGuard Prod"}
+
+
+def ranking_client(env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """The guided ranking call's own LLM client: thinking ON by default (INVESTIGATOR_THINK=0
+    turns it off), with THINKING_MAX_TOKENS. qwen3:14b echoed or reversed the shown order with
+    thinking off and ranked with it on (dev case, Deviation 3). Explanations keep llm_from_env
+    as configured (thinking off)."""
+    e = _env(env)
+    if e.get("INVESTIGATOR_THINK", "1").strip() == "0":
+        return {}
+    return {"ordering_llm": llm_from_env({**e, "LLM_THINK": "1"}),
+            "ordering_max_tokens": THINKING_MAX_TOKENS}
 
 
 def configs_from_env(env: Mapping[str, str] | None = None) -> dict[Domain, DomainConfig]:
@@ -104,6 +119,7 @@ def orchestrator_for(store: Any, env: Mapping[str, str] | None = None) -> Orches
                 search=search_from_env(e), configs=configs_from_env(e),
                 flag_source=flag_source_from_env(e), llm=llm_from_env(e),
                 llm_model=e.get("MODEL_CHEAP", ""),
+                ordering_model=investigator_model(e), **ranking_client(e),
                 replay_segments=(sandbox_segments
                                  if e.get("TRUSTGATE_SEARCH", "").strip() == "sandbox" else None))
         return _orchestrators[id(store)]

@@ -193,3 +193,35 @@ def test_ollama_quota_like_failure_falls_back_in_ordering():
     llm = _ollama(lambda r: httpx.Response(503, text="busy"))
     out = order_suspects(suspects, None, InvestigationMode.GUIDED, llm, model="llama3.2:3b")
     assert out.source == "diff" and out.suspects == suspects and "unavailable" in out.note
+
+
+def test_investigator_model_prefers_its_own_setting_then_the_flagship():
+    from agent.llm import investigator_model
+    assert investigator_model({"INVESTIGATOR_MODEL": "x", "MODEL_FLAGSHIP": "f",
+                               "MODEL_CHEAP": "c"}) == "x"
+    assert investigator_model({"MODEL_FLAGSHIP": "f", "MODEL_CHEAP": "c"}) == "f"
+    assert investigator_model({"MODEL_CHEAP": "c"}) == "c"
+    assert investigator_model({}) == ""
+
+
+def test_wiring_gives_the_orchestrator_the_flagship_for_ranking():
+    from orchestrator import wiring
+    stores = [object()]
+    orch = wiring.orchestrator_for(stores[0], {"MODEL_CHEAP": "qwen3:8b",
+                                               "MODEL_FLAGSHIP": "qwen3:14b"})
+    assert (orch.llm_model, orch.ordering_model) == ("qwen3:8b", "qwen3:14b")
+
+
+def test_ranking_client_thinks_by_default_and_explanations_do_not():
+    from agent.ordering import THINKING_MAX_TOKENS
+    from orchestrator import wiring
+    env = {"LLM_PROVIDER": "ollama", "MODEL_CHEAP": "qwen3:8b", "MODEL_FLAGSHIP": "qwen3:14b"}
+    client = wiring.ranking_client(env)
+    assert isinstance(client["ordering_llm"], OllamaLLM) and client["ordering_llm"].think is True
+    assert client["ordering_max_tokens"] == THINKING_MAX_TOKENS == 2048
+    assert llm_from_env(env).think is False  # explanations: thinking off
+    assert wiring.ranking_client({**env, "INVESTIGATOR_THINK": "0"}) == {}
+    stores = [object()]
+    orch = wiring.orchestrator_for(stores[0], env)
+    assert orch.ordering_llm.think is True and orch.llm.think is False
+    assert (orch.ordering_model, orch.ordering_max_tokens) == ("qwen3:14b", 2048)

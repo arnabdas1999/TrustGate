@@ -26,12 +26,14 @@ from typing import Any
 
 from agent.explain import explain
 from agent.llm import LLM
+from agent.ordering import MAX_TOKENS as ORDERING_MAX_TOKENS
 from agent.ordering import order_suspects
 from agent.triage import TriageError, triage
 from contracts.models import (
     Domain,
     Identity,
     Investigation,
+    InvestigationMode,
     InvestigationStatus,
     Proposal,
     ProposalState,
@@ -169,7 +171,8 @@ class Orchestrator:
                  flag_source: Callable[[str], FlagSource],
                  clock: Callable[[], datetime] = lambda: datetime.now(UTC),
                  sleep: Callable[[float], None] = time.sleep, verify_timeout_s: float = 60.0,
-                 llm: LLM | None = None, llm_model: str = "",
+                 llm: LLM | None = None, llm_model: str = "", ordering_model: str = "",
+                 ordering_llm: LLM | None = None, ordering_max_tokens: int = 0,
                  replay_segments: Callable[[], Mapping[str, Any] | None] | None = None):
         self.repo, self.gate, self.search = repo, gate, search
         self.configs, self.flag_source = configs, flag_source
@@ -177,6 +180,13 @@ class Orchestrator:
         # Optional: guided suspect ordering and the approver's explanation. Without it (or on
         # quota) the diff order and the code-written template are used.
         self.llm, self.llm_model = llm, llm_model
+        # The guided ranking call may use a stronger model than the explanations (qwen3:8b
+        # echoed the suspect order; qwen3:14b ranks). Empty: the same model as explanations.
+        self.ordering_model = ordering_model or llm_model
+        # Its own client too (e.g. thinking on for the ranking only, Deviation 3), with a token
+        # budget that fits the thinking; defaults: the explanation client and MAX_TOKENS.
+        self.ordering_llm = ordering_llm if ordering_llm is not None else llm
+        self.ordering_max_tokens = ordering_max_tokens or ORDERING_MAX_TOKENS
         # The segment definitions the search replays against (the sandbox's copy). When set,
         # the triaged segment's live Flagsmith rules must match them, or the search would
         # validate a repair for a different set of identities than the write reaches.
@@ -210,9 +220,15 @@ class Orchestrator:
         baseline = load_snapshot(incident.baseline_snapshot, self.gate)
         release = load_snapshot(incident.release_snapshot, self.gate)
         ordering = order_suspects(release_diff(baseline, release), incident.trace, inv.mode,
-                                  self.llm, model=self.llm_model)
+                                  self.ordering_llm, model=self.ordering_model,
+                                  seed=incident.id, max_tokens=self.ordering_max_tokens)
         inv.suspects = ordering.suspects
-        if ordering.note:
+        if inv.mode is InvestigationMode.GUIDED:  # WARNING so it shows in the api's logs
+            log.warning("investigation %s: suspect order from %s (model %s)%s; shown %s, "
+                        "ranked %s", inv.id, ordering.source, self.ordering_model or "-",
+                        f": {ordering.note}" if ordering.note else "",
+                        ordering.extra.get("shown"), [s.flag for s in ordering.suspects])
+        elif ordering.note:
             log.info("investigation %s: %s", inv.id, ordering.note)
         view = self.gate.read("get_environment_document", {"environment": cfg.environment})
         try:
