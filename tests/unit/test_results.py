@@ -301,3 +301,38 @@ def test_cli_reports_malformed_manual_log(tmp_path):
     with pytest.raises(SystemExit, match=r"manual_log\.csv:2"):
         results.main(["--runs", str(tmp_path / "none.jsonl"), "--manual", str(manual),
                       "--keys", str(tmp_path), "--out", str(tmp_path / "r.md")])
+
+
+def test_zero_active_time_on_an_approved_automated_run_counts_as_missing():
+    runs = [
+        _run("opspilot-eval-1", Arm.PLAIN, applied_s=600, human_active_ms=0),
+        _run("opspilot-eval-2", Arm.PLAIN, applied_s=600, human_active_ms=8000),
+        _run("opspilot-eval-3", Arm.PLAIN, applied_s=600, human_active_ms=4000),
+    ]
+    plain = summarize(runs, {})["arms"]["plain"]
+    assert plain["human_active_ms_median"] == 6000
+    assert plain["human_active_missing"] == 1
+    md = render(summarize(runs, {}), [], generated_at=WHEN)
+    assert "not measured on 1 Plain ddmin run:" in md
+
+
+def test_excluded_records_leave_the_arm_totals_and_are_listed():
+    runs = [
+        _run("opspilot-eval-1", Arm.GUIDED, applied_s=600, investigation_id="inv_old"),
+        _run("opspilot-eval-1", Arm.GUIDED, unsolved=True, investigation_id="inv_expired"),
+        _run("opspilot-eval-1", Arm.GUIDED, applied_s=600, investigation_id="inv_new"),
+    ]
+    excluded = {"inv_old": "Superseded.", "inv_expired": "Expired."}
+    summary = summarize(runs, {}, excluded)
+    assert summary["arms"]["guided"]["n"] == 1
+    assert summary["arms"]["guided"]["unsolved"] == 0
+    md = render(summary, [], generated_at=WHEN)
+    assert "not in the TrustGate totals: opspilot-eval-1 (inv_old). Superseded." in md
+    assert "(inv_expired). Expired." in md
+
+
+def test_load_excluded(tmp_path):
+    assert results.load_excluded(tmp_path / "missing.json") == {}
+    path = tmp_path / "excluded.json"
+    path.write_text(json.dumps([{"investigation_id": "inv_1", "reason": "r"}]), encoding="utf-8")
+    assert results.load_excluded(path) == {"inv_1": "r"}

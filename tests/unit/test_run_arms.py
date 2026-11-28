@@ -220,7 +220,7 @@ def test_global_rollback_skipped_without_sandbox(monkeypatch, incidents_dir, tmp
                        out=out, emit=messages.append)
     assert result == []
     assert not out.exists()
-    assert any("needs the sandbox (Khyati)" in m for m in messages)
+    assert any("sandbox.evaluate_global_rollback is not importable" in m for m in messages)
 
 
 def test_global_rollback_with_evaluator(incidents_dir, tmp_path):

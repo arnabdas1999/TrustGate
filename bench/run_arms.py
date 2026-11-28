@@ -7,7 +7,7 @@ investigation in that mode, wait for a proposal, then wait for a human to approv
 in the UI. This script never approves anything itself.
 
 global_rollback is computed in the sandbox: revert the whole release and score the held-out
-cases. It needs sandbox.evaluate_global_rollback (Khyati) and is skipped until that exists.
+cases with sandbox.evaluate_global_rollback (no Flagsmith write, no approval).
 
 Reads bench/incidents/<case>.json (a captured contracts.Incident, written by the sandbox) and,
 for global_rollback, bench/releases/<case>.json. Appends to bench/records/runs.jsonl.
@@ -59,7 +59,7 @@ class WaitForDecision(Protocol):
 
 
 class GlobalRollbackEvaluator(Protocol):
-    """TODO(khyati): provide this as sandbox.evaluate_global_rollback.
+    """Provided by sandbox.evaluate_global_rollback.
 
     Replays the incident with every flag in the release reverted to its old value, plus the
     held-out cases, and returns (heldout_passes, heldout_runs, cost_kept). cost_kept is the
@@ -304,8 +304,7 @@ def run_cases(cases: Iterable[str], arms: Iterable[Arm], *, client: httpx.Client
     if Arm.GLOBAL_ROLLBACK in arms:
         evaluator = load_evaluator()
         if evaluator is None:
-            emit("skip global_rollback: needs the sandbox (Khyati); "
-                 "sandbox.evaluate_global_rollback is not importable yet")
+            emit("skip global_rollback: sandbox.evaluate_global_rollback is not importable")
 
     for case in cases:
         try:

@@ -23,6 +23,8 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
+      # Incidents captured on the host (sandbox.capture_bench) after the image was built
+      - ./bench/incidents:/app/bench/incidents
     depends_on:
       - gate
 
