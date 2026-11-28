@@ -80,12 +80,14 @@ def guided_order(suspects: list[FlagChange], trace=None, llm=None, env=None
                  ) -> tuple[list[FlagChange], str]:
     """The investigator's suspect ranking (agent.ordering, Naman's), as the guided arm uses it.
     Falls back to diff order, and says so, when the LLM is unavailable."""
-    from agent.llm import llm_from_env, model_id
+    from agent.llm import investigator_model, llm_from_env
     from agent.ordering import order_suspects
 
     llm = llm if llm is not None else llm_from_env(env)
-    ordering = order_suspects(suspects, trace, InvestigationMode.GUIDED, llm,
-                              model=model_id("model_cheap", env))
+    model = investigator_model(env)  # the same ranking model as the orchestrator's guided arm
+    if not model:
+        raise ValueError("no investigator model configured (set MODEL_FLAGSHIP)")
+    ordering = order_suspects(suspects, trace, InvestigationMode.GUIDED, llm, model=model)
     return list(ordering.suspects), ordering.source
 
 
