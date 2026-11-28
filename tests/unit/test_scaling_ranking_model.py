@@ -69,3 +69,24 @@ def test_scaling_builds_the_thinking_client_when_none_is_given(monkeypatch):
     monkeypatch.setattr(agent.ordering, "order_suspects", fake_order)
     guided_order(suspects, env={"MODEL_FLAGSHIP": "qwen3:14b", "LLM_PROVIDER": "ollama"})
     assert seen == [(OllamaLLM.__name__, True, "qwen3:14b", 2048)]
+
+
+def test_scaling_guided_ranking_shows_a_seeded_shuffle_like_the_guided_arm(monkeypatch):
+    """The guided arm shows the LLM a shuffle seeded by the incident id (Deviation 3); the
+    scaling test must too, or it measures the alphabetical order the local models echoed."""
+    import agent.ordering
+    import search.scaling as scaling
+
+    seeds = []
+
+    def fake_order(suspects, trace, mode, llm, *, model, seed="", max_tokens=0):
+        seeds.append(seed)
+        return agent.ordering.Ordering(list(suspects), "llm")
+    monkeypatch.setattr(agent.ordering, "order_suspects", fake_order)
+    env = {"MODEL_FLAGSHIP": "qwen3:14b", "LLM_PROVIDER": "ollama"}
+    scaling.measure("opspilot", 10, oracle="synthetic", mode="guided", env=env)
+    scaling.measure("vaultguard", 20, oracle="synthetic", mode="guided", seed=3, env=env)
+    assert seeds == ["scaling-opspilot-10-0", "scaling-vaultguard-20-3"]
+    _, suspects = scaling.build_release(10, 0)
+    shown = agent.ordering.shown_order(suspects, seeds[0])
+    assert [s.flag for s in shown] != [s.flag for s in suspects]  # really shuffled

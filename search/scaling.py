@@ -76,10 +76,12 @@ def synthetic_oracle(domain: str):
     return oracle
 
 
-def guided_order(suspects: list[FlagChange], trace=None, llm=None, env=None
-                 ) -> tuple[list[FlagChange], str]:
+def guided_order(suspects: list[FlagChange], trace=None, llm=None, env=None, *,
+                 shown_seed: str = "") -> tuple[list[FlagChange], str]:
     """The investigator's suspect ranking (agent.ordering, Naman's), as the guided arm uses it.
-    Falls back to diff order, and says so, when the LLM is unavailable."""
+    Falls back to diff order, and says so, when the LLM is unavailable. shown_seed plays the
+    incident id: the guided arm shows the LLM a shuffle seeded by it (Deviation 3), never the
+    alphabetical diff order the local models echoed or reversed."""
     from agent.llm import investigator_model, llm_from_env
     from agent.ordering import MAX_TOKENS, order_suspects
     from orchestrator.wiring import ranking_client  # imported here: no cycle at import time
@@ -90,6 +92,7 @@ def guided_order(suspects: list[FlagChange], trace=None, llm=None, env=None
     if not model:
         raise ValueError("no investigator model configured (set MODEL_FLAGSHIP)")
     ordering = order_suspects(suspects, trace, InvestigationMode.GUIDED, llm, model=model,
+                              seed=shown_seed,
                               max_tokens=client.get("ordering_max_tokens", MAX_TOKENS))
     return list(ordering.suspects), ordering.source
 
@@ -99,7 +102,8 @@ def measure(domain: str, n: int, *, oracle: str = "synthetic", seed: int = 0,
     captured, suspects = build_release(n, seed)
     order_source = "diff"
     if mode == "guided":
-        suspects, order_source = guided_order(suspects, llm=llm, env=env)
+        suspects, order_source = guided_order(suspects, llm=llm, env=env,
+                                              shown_seed=f"scaling-{domain}-{n}-{seed}")
     if oracle == "synthetic":
         identity = {"identifier": "scaling", "traits": {}}
         factory = lambda inc: synthetic_oracle(domain)  # noqa: E731
