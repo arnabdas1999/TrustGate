@@ -479,6 +479,25 @@ statistical claims. Expectations that fail are reported as failed.
    run counts between plain and guided are unaffected. Reason: about 11 to 13 minutes per run
    instead of about 29 on one Mac. Effect: a check that stops after 3 identical runs is weaker
    evidence than 20, and the evidence line says "one behaviour observed" in that case.
+3. *Guided ranking model (decided Nov 28, after eval runs 1 and 2).* With `qwen3:8b` as the
+   investigator, guided search equalled plain: on `opspilot-eval-1` the model returned the
+   suspects in exactly the order it was shown (the diff order), so the guided run tested the
+   same configurations as the plain run (59 runs each). That guided record is kept and
+   reported as a finding. Three diagnostic ranking calls were made on that eval case
+   (`qwen3:8b` echoed the order; `qwen3:14b` returned it reversed, both with the diff order
+   and with a shuffled one), before the check moved to a dev case. Changes for the remaining
+   guided runs: the suspects are shown to the investigator in a fixed shuffled order seeded
+   from the incident id; a reply that equals the shown order or its reverse is kept but
+   flagged ("LLM returned the input order" / "… reversed") and logged; and the ranking call
+   uses the flagship model (`INVESTIGATOR_MODEL`, default `MODEL_FLAGSHIP` = `qwen3:14b`) with
+   thinking on for that call only (a 2,048-token budget, about 60 s per investigation).
+   Explanations stay on `qwen3:8b` with thinking off. Checked on a dev case before switching
+   (`opspilot-dev-1`: with thinking off, 14b returned the shown order reversed; with thinking
+   on, it ranked `agent_prompt_version` first and the reply was no echo). The dev case's
+   shuffled order happened to equal `opspilot-eval-1`'s, on a different release. The scaling
+   test uses the same ranking model and settings (thinking on, the same token budget). Effect:
+   the remaining guided runs use one fixed ranking setup for every case, chosen before seeing
+   any of their results.
 
 ## Limits and known issues
 
