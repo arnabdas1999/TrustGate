@@ -483,7 +483,9 @@ def test_guided_mode_ranks_suspects_and_explains_with_the_llm(setup):
     inv = repo.get_investigation("inv_1")
     assert inv.suspects[0].flag == "agent_prompt_version"
     assert inv.timestamps.first_suspect is not None
-    assert repo.get_proposal(inv.proposal_id).explanation.startswith("The prompt change")
+    text = repo.get_proposal(inv.proposal_id).explanation
+    assert text.startswith("agent_prompt_version changed in the release")
+    assert "Investigator's summary: The prompt change" in text
 
 
 def test_llm_quota_falls_back_without_breaking_the_investigation(setup):
@@ -788,16 +790,32 @@ def test_without_a_recorded_pre_write_state_it_reads_now_then_falls_back(setup):
 from orchestrator.lifecycle import _card_text  # noqa: E402
 
 
-def test_card_text_keeps_the_llm_first_and_appends_repair_and_evidence():
+def test_card_text_leads_with_cause_repair_and_evidence_then_the_llm_summary():
     inv, cand = _inv([PROMPT_C, TOOLS_C]), _cand(RepairKind.SEGMENT_OVERRIDE)
     ops = [_op("agent_tool_policy", "restricted", "high_value_wires")]
     text = _card_text("The split tool plus the fast prompt bypass dual control", inv, cand, ops)
-    assert text.startswith("The split tool plus the fast prompt bypass dual control. "
-                           "agent_prompt_version and agent_tool_policy together reproduce "
+    assert text.startswith("agent_prompt_version and agent_tool_policy together reproduce "
                            "the failure; the repair reverts agent_tool_policy on "
                            "high_value_wires and keeps agent_prompt_version. Evidence: 0 "
                            "failures in 20 runs, all identical")
-    assert text.endswith("not a failure-rate estimate.")
+    assert text.endswith("Investigator's summary: The split tool plus the fast prompt bypass "
+                         "dual control.")
+    assert text.index("Evidence:") < text.index("Investigator's summary:")
+
+
+def test_a_wrong_llm_cause_never_leads_the_card():
+    inv, cand = _inv([PROMPT_C, TOOLS_C]), _cand(RepairKind.SEGMENT_OVERRIDE)
+    ops = [_op("agent_tool_policy", "restricted", "high_value_wires")]
+    wrong = "The change to agent_prompt_version caused the failure"  # names one of the pair
+    text = _card_text(wrong, inv, cand, ops)
+    assert not text.startswith(wrong) and text.startswith("agent_prompt_version and "
+                                                          "agent_tool_policy together")
+
+
+def test_card_text_without_llm_text_has_no_summary_label():
+    inv, cand = _inv([PROMPT_C], "tier0_production"), _cand(RepairKind.SEGMENT_OVERRIDE)
+    ops = [_op("agent_prompt_version", "v1_strict", "tier0_production")]
+    assert "Investigator's summary" not in _card_text("   ", inv, cand, ops)
 
 
 def test_card_text_does_not_repeat_an_evidence_line_the_llm_already_quoted():
@@ -816,10 +834,10 @@ def test_llm_explanation_on_the_proposal_carries_the_code_lines(setup):
     llm = FakeLLM(['["agent_prompt_version"]', "The prompt change breaks tier-0 only"])
     _with_llm(setup, llm).run("inv_1")
     text = repo.get_proposal(repo.get_investigation("inv_1").proposal_id).explanation
-    assert text.startswith("The prompt change breaks tier-0 only. agent_prompt_version "
-                           "changed in the release and reproduces the failure; the repair "
-                           "reverts agent_prompt_version on tier0_production. Evidence: "
-                           "0 failures in 20 runs")
+    assert text.startswith("agent_prompt_version changed in the release and reproduces the "
+                           "failure; the repair reverts agent_prompt_version on "
+                           "tier0_production. Evidence: 0 failures in 20 runs")
+    assert text.endswith("Investigator's summary: The prompt change breaks tier-0 only.")
 
 
 def test_template_explanation_is_unchanged_without_an_llm(setup):
