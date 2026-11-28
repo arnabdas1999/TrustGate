@@ -49,7 +49,7 @@ def _key(*flags):
 def _rows(markdown):
     """Results-table rows as label -> [Manual, Global rollback, Plain ddmin, TrustGate]."""
     out = {}
-    for line in markdown.splitlines():
+    for line in markdown.split("## What this shows")[0].splitlines():
         if not line.startswith("|"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
@@ -336,3 +336,36 @@ def test_load_excluded(tmp_path):
     path = tmp_path / "excluded.json"
     path.write_text(json.dumps([{"investigation_id": "inv_1", "reason": "r"}]), encoding="utf-8")
     assert results.load_excluded(path) == {"inv_1": "r"}
+
+
+def test_expectations_pending_until_their_arms_exist():
+    runs = [_run("opspilot-eval-1", Arm.GUIDED, applied_s=600, human_active_ms=5000,
+                 cost_kept=1.0, validated_repair=True)]
+    verdicts = [v for _, v, _ in results.expectations(summarize(runs, {}), {})]
+    assert verdicts == ["pending"] * 4
+
+
+def test_expectations_held_and_failed_from_the_numbers():
+    runs = [
+        _run("vaultguard-eval-1", Arm.GUIDED, applied_s=600, human_active_ms=5000, cost_kept=0.9,
+             validated_repair=True, culprit=["a", "b"]),
+        _run("vaultguard-eval-1", Arm.MANUAL, applied_s=900, human_active_ms=900_000,
+             culprit=["a"]),
+        _run("vaultguard-eval-1", Arm.GLOBAL_ROLLBACK, cost_kept=0.0,
+             notes="held-out 18/18 passed (sandbox)"),
+    ]
+    keys = {"vaultguard-eval-1": {"bad_changes": [{"flag": "a"}, {"flag": "b"}]}}
+    scale = {10: {"guided": {"median": 12, "n": 1}, "plain": {"median": 11, "n": 1}},
+             20: {"guided": {"median": 12, "n": 1}, "plain": {"median": 13, "n": 1}}}
+    got = results.expectations(summarize(runs, keys), scale)
+    assert [v for _, v, _ in got] == ["held", "held", "held", "failed"]
+    assert "global rollback held-out 18/18" in got[1][2]
+    assert "10 flags: 12 against 11" in got[3][2]
+
+
+def test_render_has_the_shows_and_doesnt_show_blocks():
+    runs = [_run("opspilot-eval-1", Arm.PLAIN, applied_s=600, first_s=120, diagnostic_runs=5,
+                 cost_kept=1.0)]
+    md = render(summarize(runs, {}), [], generated_at=WHEN)
+    assert "## What this shows" in md and "## What this doesn't show" in md
+    assert "| opspilot-eval-1 | Plain ddmin | 5 | 2m 00s | 100% | — |" in md

@@ -7,8 +7,8 @@ for your approval before changing a single production flag.**
 Built for [Toggle Wars](https://www.wemakedevs.org/hackathons/flagsmith), Track 2: AI Agents and
 Feature Flags.
 
-> Demo video: _link added after recording (Saturday)_ · Status: feature-complete; benchmark
-> running
+> Demo video: _link added after recording (Saturday)_ · Status: feature-complete; eval runs done
+> (12 of 12 verified, `bench/results.md`)
 
 ![The TrustGate arena: sandbox pods glowing red and green, the OpsPilot robot holding the culprit
 flag, the Gatekeeper beside the amber gate to Flagsmith Prod, and the approval panel with the exact
@@ -57,8 +57,9 @@ flowchart LR
    changes that reproduces the failure.
 4. It tests repairs, narrowest first, and proposes the smallest one that passes: usually a
    segment override that protects only high-risk users.
-5. A human approves the exact change. Only then does TrustGate write to Flagsmith, read the
-   result back, and re-run the incident.
+5. A human approves the exact change. Only then does TrustGate write to Flagsmith, then checks
+   that Flagsmith serves the fix to the right identities and that the override is in the
+   environment document.
 
 ## How we use Flagsmith
 
@@ -68,7 +69,7 @@ diagnose and no way to apply a fix.
 **Flags drive the agents.** OpsPilot and VaultGuard read their model, prompt version, tool
 policy, step limit and context mode from Flagsmith per request, with trusted traits (`env`,
 `tier`, `amount_usd`, `new_vendor`) set in code. Each incident records the flag values the
-failing agent actually received. *(in progress in `sandbox/`)*
+failing agent actually received.
 
 **Snapshots and the release diff.** `scripts/release.py` plays the team shipping a release.
 Before and after, it saves:
@@ -108,7 +109,10 @@ The version's description carries the proposal and approval ids.
 
 **Verification.** After a write, the verifier resolves a tier-0 identity and a staging
 identity through the edge identities endpoint (server-side key, transient identity) and
-polls for up to 60 s. Values from a default handler never count.
+polls for up to 60 s. Values from a default handler never count. It also checks that the
+override (or the new default) is in the environment document, because on a test environment the
+repaired value can equal what was already served. That is the whole of "VERIFIED": there is no
+fresh agent replay after the write.
 
 **Audit trail.** On our plan, Flagsmith's audit endpoint returned HTTP 500 or no entries, and
 v2 versions record no author for API-key writes. So the gate keeps its own append-only,
@@ -335,9 +339,10 @@ incident's segment only), then a surgical revert (culprit flags back for everyon
 rollback. For a two-flag culprit, each flag is tried on its own before the pair. Validation stops
 at the first option that passes; the wider ones are listed unvalidated so the card can show them.
 "Cost saving kept" is `(baseline cost − option cost) / (baseline cost − release cost)`, from
-measured tokens per run. Example: VaultGuard's segment rule only sees a single wire's amount, so
-a split payment to the same vendor slips past it. TrustGate sees the held-out case regress, won't
-scope the fix to the segment, and proposes reverting one flag instead.
+measured tokens per run. Example: VaultGuard breaks only when the expanded tools and the fast
+prompt ship together. In all six eval runs the narrowest fix won: revert only
+`agent_tool_policy`, only for the `high_value_wires` segment, and keep the fast prompt (89 to
+94% of the cost saving kept; reverting the prompt instead also passed but kept less).
 
 **The evidence line.** With independent runs, 0 failures in n runs means that, with 95%
 confidence, the failure rate is below about 3/n (the rule of three): "0 failures in 20 runs. With
@@ -505,7 +510,8 @@ statistical claims. Expectations that fail are reported as failed.
   of each domain, graded from the database. A repair proven there is still a hypothesis about
   production; the read-back checks what Flagsmith serves, not how the agent then behaves.
 - **Local models.** The demo runs `qwen3:14b` and `qwen3:8b` on one MacBook through Ollama, one
-  replay at a time, so a full investigation takes about 20 minutes. Faster with a hosted
+  replay at a time, so a full investigation takes 11 to 21 minutes (about 60 replays, 70% of them
+  held-out validation). Faster with a hosted
   provider (`LLM_PROVIDER=groq` or `openai`), at the price of rate limits or a bill.
 - **Temperature 0.** Runs of one configuration are often identical, so "0 failures in 20 runs"
   can be one behaviour seen 20 times. The evidence line says so instead of quoting a
@@ -515,6 +521,13 @@ statistical claims. Expectations that fail are reported as failed.
   the card offers a rollback proposal.
 - **Small benchmark.** Six eval cases per arm, all synthetic incidents on two demo agents. It
   shows the method works end to end; it isn't a statistical result.
+- **One culprit per domain.** Only one bad change per domain passed verification, so a domain's
+  three cases share their culprit and differ only in the safe changes around it.
+- **Guided ranking cuts both ways.** It helped single-flag culprits (3 diagnostic runs instead of
+  5, twice; one tie) and was worse on every interaction case (20, 30 and 20 against 10), because
+  ranking one flag of the pair last splits the pair across delta debugging's halves.
+- **"Verified" is a read-back, not a replay.** After the write TrustGate confirms what Flagsmith
+  serves and what the environment document holds; it doesn't re-run the agent.
 - **Flagsmith free plan.** One dashboard seat, so only the organisation owner sees the
   dashboard; the rest of the team works through the API keys. The audit log is empty on the
   free plan, which is why the gate keeps its own.

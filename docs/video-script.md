@@ -1,6 +1,7 @@
 # Demo video: script and shot list (2:30)
 
-Record on Saturday after the 16:00 IST code freeze, on Naman's Mac. Every number on screen must be
+Record Saturday 3:30–5:30 AM ET, on Naman's Mac, with nothing else running on it (code freeze at
+5:30 AM ET). Every number on screen must be
 measured; anything replayed from cache is labelled "replayed from cache" on screen. Do one take of
 the approve moment against live Flagsmith with no cache.
 
@@ -14,7 +15,9 @@ a human approves changes; clear output. Every shot below serves one of those.
 - [ ] Production build: `docker compose up --build` with `MOCK=0` (no dev-server badge on screen); gate healthy
 - [ ] The scene has loaded once before the take (the 3D stage takes a few seconds the first time)
 - [ ] The Flagsmith dashboard on Naman's account (free plan: one seat), OpsPilot Prod open, flags visible
-- [ ] OpsPilot hero incident captured; its investigation reached "Needs approval", not signed in yet
+- [ ] About 3:15 AM ET: start one fresh OpsPilot investigation on bench-1 through the API (not
+  `run_arms`, so no eval record). It reaches "Needs approval" in about 12 minutes; don't sign in
+  yet. Reset bench-1 to fingerprint d50c5682 after the take
 - [ ] VaultGuard interaction run ready (cached is fine, labelled)
 - [ ] Claude Code open with the TrustGate MCP server configured (README, "Use TrustGate from Claude Code")
 - [ ] `bench/results.md` generated from the eval records
@@ -28,9 +31,10 @@ a human approves changes; clear output. Every shot below serves one of those.
 | 0:12–0:30 | Claude Code: "investigate the payments agent incident" calls TrustGate's MCP server. Cut to the inbox hangar: the OpsPilot robot on its pad, amber "Needs approval" | "TrustGate is an agent that works with Flagsmith for you, through Flagsmith's MCP server. But it holds no key that can write: only a separate gate does." | Claude Code window, inbox |
 | 0:30–0:58 | Click the OpsPilot robot. The arena: sandbox pods glowing red and green, the robot holding the red culprit token, "agent_prompt_version" above it. Hover one pod to show "Search · 2/3 failed". Story panel: "agent_prompt_version broke OpsPilot" | "It replays the agent in sandboxes: every pod is one combination of the release's flags, graded on the database, not the agent's word. Delta debugging narrows five suspects to one. The obvious suspect, the cheaper model, is innocent." | Live or cached run |
 | 0:58–1:18 | Approval panel: the red/green diff (`v2_fast` → `v1_strict` for tier0_production only), the checks in the story panel, "Expires in", then open Evidence for two seconds (repairs tested: segment override proposed, global rollback keeps 0%) | "It proves the narrowest repair: keep the faster prompt and the cheaper model everywhere, except for tier-0 customers. Here is the exact change it will make, and nothing happens until a human approves it." | Proposal waiting |
-| 1:18–1:42 | Sign in, click Approve and apply. The gate's amber field dissolves, the doors slide open, the token turns green and flies to the Prod robot, which turns green. Cut to the Flagsmith dashboard: the new tier-0 override (a new feature version). Back to the arena: Verified | "One approval, one exact change, used once, written through Flagsmith's MCP. Then it reads back what Flagsmith actually serves: tier-0 gets the strict prompt, everyone else keeps the fast one." | Live take, no cache |
-| 1:42–2:05 | VaultGuard arena: the search finds the tools × prompt pair; the agent split a $14,500 invoice to slip under the approval line. Evidence: the segment-only fix fails held-out cases, so the proposal is the per-flag revert | "Same tool, a payments agent. This bug only appears when two flags change together, and TrustGate shows why the narrower fix was rejected." | Cached VaultGuard run, labelled |
-| 2:05–2:30 | `bench/results.md` table | Lead with human active time versus the manual arm and how much of the release each repair keeps; say n. End on the repo URL | Generated results |
+| 1:18–1:42 | Sign in, click Approve and apply. The gate's amber field dissolves, the doors slide open, the token turns green and flies to the Prod robot, which turns green. **Flagsmith moment 1:** cut to the dashboard, `agent_prompt_version`, the new `tier0_production` segment override. **Flagsmith moment 2:** its version history, the new feature version whose description carries the proposal and approval ids. Back to the arena: Verified | "One approval, one exact change, used once, written as a Flagsmith feature version through Flagsmith's MCP server. Then it checks what Flagsmith actually serves: tier-0 gets the strict prompt, everyone else keeps the fast one." | Live take, no cache; dashboard tab open on the feature |
+| 1:42–1:50 | **Flagsmith moment 3:** open Evidence. The exact MCP call (`create_environment_feature_version` with its payload) and the gate's audit row for it: who approved, payload hash, fingerprints before and after | "Every write is one recorded MCP call, and the gate keeps its own hash-chained trail." | Same investigation |
+| 1:50–2:08 | VaultGuard arena: the search finds the tools × prompt pair; the agent split a $14,500 invoice to slip under the approval line. The proposal: revert only `agent_tool_policy`, only for `high_value_wires` | "Same tool, a payments agent. This bug only appears when two flags change together. The narrowest fix wins: revert only the tools, only for high-value wires; the fast prompt stays." | Recorded VaultGuard eval run, labelled "recorded" |
+| 2:08–2:30 | `bench/results.md` table | Lead with human active time versus the manual arm (seconds of clicks against minutes of work) and how much of the release each repair keeps; say n = 6 per arm and that the manual runner knew the culprit. End on the repo URL | Generated results |
 
 Optional security beat (from `scripts/security_beats.py`): a reused approval refused, a stale
 proposal refused, a denied read. Take its time from the VaultGuard shot.

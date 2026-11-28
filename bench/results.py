@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import statistics
 import sys
 from collections.abc import Iterable, Sequence
@@ -259,7 +260,37 @@ def summarize_arm(runs: Sequence[RunRecord], keys: dict[str, Key]) -> dict[str, 
             [r.diagnostic_runs for r in runs if r.diagnostic_runs is not None]
         ),
         "inference_usd_total": sum(costs) if costs else None,
+        "validated": sum(1 for r in runs if r.validated_repair),
+        "heldout": _heldout_total(runs),
     }
+
+
+HELDOUT_NOTE = re.compile(r"held-out (\d+)/(\d+) passed")
+
+
+def _heldout_total(runs: Sequence[RunRecord]) -> tuple[int, int] | None:
+    """(passes, runs) summed over the arm's held-out notes (the global rollback arm writes them)."""
+    found = [HELDOUT_NOTE.search(r.notes) for r in runs]
+    pairs = [(int(m.group(1)), int(m.group(2))) for m in found if m]
+    return (sum(a for a, _ in pairs), sum(b for _, b in pairs)) if pairs else None
+
+
+def per_case(runs: Sequence[RunRecord], keys: dict[str, Key]) -> list[dict[str, Any]]:
+    """One row per counted run, in case then arm order."""
+    order = {a: i for i, a in enumerate(ARM_ORDER)}
+    rows = []
+    for r in sorted(runs, key=lambda r: (r.case, order[r.arm])):
+        key = keys.get(r.case)
+        rows.append({
+            "case": r.case, "arm": r.arm.value,
+            "diagnostic_runs": r.diagnostic_runs,
+            "first_suspect_ms": (_ms(r.started_at, r.first_suspect_at)
+                                 if r.first_suspect_at is not None else None),
+            "cost_kept": r.cost_kept,
+            "correct": None if key is None or r.arm == Arm.GLOBAL_ROLLBACK else is_correct(r, key),
+            "unsolved": r.unsolved,
+        })
+    return rows
 
 
 def summarize(runs: Iterable[RunRecord], keys: dict[str, Key],
@@ -277,6 +308,7 @@ def summarize(runs: Iterable[RunRecord], keys: dict[str, Key],
     }
     return {
         "arms": arms,
+        "per_case": per_case(runs, keys),
         "keys_present": bool(keys),
         "total_runs": len(runs),
         "keyed_runs": sum(1 for r in runs if r.case in keys),
@@ -365,6 +397,73 @@ def _cells(summary: dict[str, Any]) -> list[tuple[str, list[str]]]:
     return rows
 
 
+HELD, FAILED, PENDING_VERDICT = "held", "failed", "pending"
+E1 = "1. TrustGate needs less human active time than the manual arm."
+E2 = ("2. TrustGate keeps more of the release's cost saving than global rollback, with no more "
+      "held-out failures.")
+E3 = "3. TrustGate finds two-flag interactions more often than the manual arm."
+E4 = "4. Guided search needs fewer search runs than plain at 10 and 20 changed flags."
+
+
+def expectations(summary: dict[str, Any], scale: dict[int, dict[str, dict[str, Any]]]
+                 ) -> list[tuple[str, str, str]]:
+    """The four pre-registered expectations: (statement, verdict, the numbers behind it)."""
+    arms = summary["arms"]
+    tg, manual, rollback = (arms[a.value] for a in (Arm.GUIDED, Arm.MANUAL, Arm.GLOBAL_ROLLBACK))
+    out = []
+
+    a, b = tg["human_active_ms_median"], manual["human_active_ms_median"]
+    if a is None or b is None:
+        out.append((E1, PENDING_VERDICT, "needs both arms' active times"))
+    else:
+        out.append((E1, HELD if a < b else FAILED,
+                    f"median {fmt_duration(a)} against {fmt_duration(b)}"))
+
+    a, b = tg["cost_kept_median"], rollback["cost_kept_median"]
+    if a is None or b is None or rollback["heldout"] is None:
+        out.append((E2, PENDING_VERDICT, "needs the global rollback arm"))
+    else:
+        passes, runs = rollback["heldout"]
+        solved = tg["n"] - tg["unsolved"]
+        ok = a > b and tg["validated"] == solved
+        out.append((E2, HELD if ok else FAILED,
+                    f"median {a * 100:.0f}% kept against {b * 100:.0f}%; "
+                    f"{tg['validated']} of {tg['n']} TrustGate repairs passed held-out "
+                    f"validation; global rollback held-out {passes}/{runs}"))
+
+    if (not summary["keys_present"] or manual["n"] == 0 or tg["interaction_total"] == 0
+            or manual["interaction_total"] == 0):
+        out.append((E3, PENDING_VERDICT, "needs the answer keys and the manual arm"))
+    else:
+        f_tg, f_m = tg["interaction_found"], manual["interaction_found"]
+        better = f_tg / tg["interaction_total"] > f_m / manual["interaction_total"]
+        out.append((E3, HELD if better else FAILED,
+                    f"{f_tg} of {tg['interaction_total']} against {f_m} of "
+                    f"{manual['interaction_total']}"))
+
+    cells = {n: (scale.get(n, {}).get("guided", {}).get("median"),
+                 scale.get(n, {}).get("plain", {}).get("median")) for n in (10, 20)}
+    if any(g is None or pl is None for g, pl in cells.values()):
+        out.append((E4, PENDING_VERDICT, "needs the scaling test"))
+    else:
+        ok = all(g < pl for g, pl in cells.values())
+        detail = "; ".join(f"{n} flags: {fmt_number(g)} against {fmt_number(pl)}"
+                           for n, (g, pl) in cells.items())
+        out.append((E4, HELD if ok else FAILED, detail))
+    return out
+
+
+def _case_rows(rows: list[dict[str, Any]]) -> list[list[str]]:
+    def correct(v: bool | None) -> str:
+        return EMPTY if v is None else ("yes" if v else "no")
+
+    return [[r["case"], ARM_LABELS[Arm(r["arm"])],
+             "unsolved" if r["unsolved"] else fmt_number(r["diagnostic_runs"], 0),
+             fmt_duration(r["first_suspect_ms"]),
+             EMPTY if r["cost_kept"] is None else f"{r['cost_kept'] * 100:.0f}%",
+             correct(r["correct"])] for r in rows]
+
+
 def _table(header: list[str], rows: list[list[str]]) -> list[str]:
     lines = ["| " + " | ".join(header) + " |", "|" + "|".join(" --- " for _ in header) + "|"]
     lines += ["| " + " | ".join(r) + " |" for r in rows]
@@ -415,7 +514,27 @@ def render(
             )
         scale_rows.append([str(size), *cells])
     out += _table(["Release size"] + [ARM_LABELS[a] for a in SCALING_ARMS], scale_rows)
-    out += ["", "Cell: median search runs (n = number of searches).", "", "## Notes", ""]
+    out += ["", "Cell: median search runs (n = number of searches).", ""]
+
+    out += ["## What this shows", ""]
+    out += _table(["Pre-registered expectation", "Verdict", "Numbers"],
+                  [list(e) for e in expectations(summary, scale)])
+    out += ["", "## Per case", ""]
+    out += _table(["Case", "Arm", "Diagnostic runs", "Time to first suspect", "Cost kept",
+                   "Right culprit"], _case_rows(summary.get("per_case", [])))
+    out += [
+        "", "## What this doesn't show", "",
+        f"- **Generality.** n = {_n_phrase(counts)} per arm on two demo agents with synthetic "
+        "incidents. Only one bad change per domain passed verification, so a domain's cases "
+        "share their culprit and differ only in the safe changes around it.",
+        "- **A blind manual baseline.** The manual runners built the change pools and knew each "
+        "domain's culprit, so manual times are a lower bound (README, pre-registration).",
+        "- **Behaviour after the write.** VERIFIED means Flagsmith serves the fix and the "
+        "environment document holds it; the agent is not replayed after the write.",
+        "- **Production.** Every replay ran in the sandbox; only the repair writes went to a real "
+        "Flagsmith test environment (bench-1).",
+        "", "## Notes", "",
+    ]
 
     unsolved = ", ".join(f"{ARM_LABELS[a]} {arms[a.value]['unsolved']}" for a in ARM_ORDER)
     out.append(
