@@ -14,7 +14,8 @@ tokens per run. 1.0 keeps the whole saving, 0.0 keeps none.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import threading
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass
 
 from contracts.models import (
@@ -35,6 +36,18 @@ HELDOUT_RUNS = 3
 HELDOUT_SLACK = 1  # "within 1 run of baseline"
 # The baseline must pass held-out itself, or comparing a repair against it means nothing.
 MIN_BASELINE_RATE = 0.8
+
+# Opt-in (SEARCH_HELDOUT_CACHE=1, search/engine.py): the baseline's held-out result, kept for
+# this process. The baseline is the same configuration on the same cases in every investigation
+# of a release, so measuring it again adds runs and no information. Only a complete, healthy
+# measurement is kept; a repair's own held-out runs are always fresh.
+_BASELINE_CACHE: dict[Hashable, tuple[int, int]] = {}
+_BASELINE_LOCK = threading.Lock()
+
+
+def clear_baseline_cache() -> None:
+    with _BASELINE_LOCK:
+        _BASELINE_CACHE.clear()
 
 
 def revert(values: Mapping[str, FlagValue], changes: Sequence[FlagChange]) -> dict[str, FlagValue]:
@@ -108,9 +121,12 @@ class HeldOut:
     """Held-out cases, run under a configuration 3 times each. Baseline is measured once and
     must itself pass held-out (MIN_BASELINE_RATE), or no repair can be judged against it."""
 
-    def __init__(self, tester: Tester, cases: Sequence[str], baseline: FlagConfig):
+    def __init__(self, tester: Tester, cases: Sequence[str], baseline: FlagConfig, *,
+                 cache_key: Hashable | None = None):
         self.tester, self.cases, self.baseline = tester, list(cases), baseline
         self._baseline: tuple[int, int] | None = None
+        self.cache_key = cache_key  # None: measure the baseline in this investigation
+        self.baseline_reused = False
 
     def passes(self, config: FlagConfig, *, max_misses: int | None = None
                ) -> tuple[int, int] | None:
@@ -134,8 +150,20 @@ class HeldOut:
         return (len(self.cases) * HELDOUT_RUNS - base[0]) + HELDOUT_SLACK
 
     def baseline_passes(self) -> tuple[int, int] | None:
-        if self._baseline is None:
-            self._baseline = self.passes(self.baseline)
+        if self._baseline is not None:
+            return self._baseline
+        if self.cache_key is not None:
+            with _BASELINE_LOCK:
+                cached = _BASELINE_CACHE.get(self.cache_key)
+            if cached is not None:
+                self._baseline, self.baseline_reused = cached, True
+                return cached
+        self._baseline = base = self.passes(self.baseline)
+        full = len(self.cases) * HELDOUT_RUNS
+        if (self.cache_key is not None and base is not None and base[1] == full
+                and base[0] >= MIN_BASELINE_RATE * full):
+            with _BASELINE_LOCK:
+                _BASELINE_CACHE[self.cache_key] = base
         return self._baseline
 
     def judge(self, held: tuple[int, int] | None) -> bool:
