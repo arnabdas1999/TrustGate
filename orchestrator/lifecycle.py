@@ -150,19 +150,25 @@ def _explain(inv: Investigation, cand: RepairCandidate, ops: Sequence[WriteOp]) 
     return f"{_repair_sentence(inv, cand, ops)}. Evidence: {_evidence(cand)}."
 
 
+LLM_SUMMARY_LABEL = "Investigator's summary:"
+
+
 def _card_text(llm_text: str, inv: Investigation, cand: RepairCandidate,
                ops: Sequence[WriteOp]) -> str:
-    """An LLM explanation first, then always the code-written repair sentence and the evidence
-    line (unless the LLM already quoted the evidence line verbatim), so the approver sees what
-    is reverted and how strong the evidence is whatever the model wrote."""
+    """The card leads with what code knows for certain: the cause, what the repair reverts and
+    keeps, and the evidence line. The LLM's wording comes after, labelled, so a vague or wrong
+    LLM sentence (e.g. naming one flag of an interaction pair) can never be the first thing an
+    approver reads. The evidence line is left out when the LLM already quoted it verbatim."""
     text = llm_text.strip()
     if text and text[-1] not in ".!?":
         text += "."
     evidence = _evidence(cand)
-    parts = [text, f"{_repair_sentence(inv, cand, ops)}."]
+    parts = [f"{_repair_sentence(inv, cand, ops)}."]
     if evidence not in text:
         parts.append(f"Evidence: {evidence}.")
-    return " ".join(p for p in parts if p)
+    if text:
+        parts.append(f"{LLM_SUMMARY_LABEL} {text}")
+    return " ".join(parts)
 
 
 class Orchestrator:
