@@ -11,3 +11,8 @@ data
 bench/keys/*.json
 web/node_modules
 web/.next
+# Private local files: never bake them into an image
+.spike/
+CLAUDE.local.md
+.claude/
+*.pdf

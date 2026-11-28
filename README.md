@@ -320,8 +320,25 @@ With the stack running locally (API on 8000, gate on 8100, web on 3000), add to
 ```
 
 Then ask Claude Code: *"Investigate incident inc_hero and show me the proposed change."*
-Under `docker compose`, the gate's port isn't published. Run the MCP server inside the
-compose network instead (an `mcp` compose service is proposed).
+Under `docker compose` the gate's port isn't published, so run the MCP server inside the
+compose network instead. With the stack up (`docker compose up --build`), use this
+`.mcp.json` in the repo folder:
+
+```json
+{
+  "mcpServers": {
+    "trustgate": {
+      "command": "docker",
+      "args": ["compose", "--project-directory", "/path/to/TrustGate",
+               "run", "--rm", "-T", "mcp"]
+    }
+  }
+}
+```
+
+The `mcp` service gets `.env` (never `.env.gate`) and reaches the API and gate by their
+compose names. It only starts when Claude Code asks for it; `-T` keeps stdin and stdout clean
+JSON-RPC.
 
 ## Search and testing
 
