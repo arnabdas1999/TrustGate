@@ -5,9 +5,11 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from api import settings
+from api.schemas import InvestigationView
 from contracts import (
     ActivityPing,
     Approval,
@@ -61,11 +63,29 @@ class Store:
         return sum(p.active_ms for p in self.activity if p.investigation_id == investigation_id)
 
 
-def seeded(mock: bool) -> Store:
+# Real investigations exported from a live run (GET /api/investigations/<id> saved as JSON).
+EXPORTS_DIR = Path(__file__).resolve().parents[1] / "bench" / "exports"
+
+
+def load_exports(directory: Path) -> list[InvestigationView]:
+    """Every exported investigation in `directory`, so mock mode shows judges measured data next
+    to the fixtures. A missing directory means none."""
+    if not directory.is_dir():
+        return []
+    return [InvestigationView.model_validate_json(path.read_text(encoding="utf-8"))
+            for path in sorted(directory.glob("*.json"))]
+
+
+def seeded(mock: bool, exports_dir: Path | None = None) -> Store:
     store = Store()
     if mock:
         from api import mock_data
 
         store.investigations, store.proposals, store.audit = mock_data.build()
         store.proposal_calls = mock_data.calls(store.proposals)
+        for view in load_exports(exports_dir if exports_dir is not None else EXPORTS_DIR):
+            store.investigations[view.investigation.id] = view.investigation
+            if view.proposal is not None:
+                store.proposals[view.proposal.id] = view.proposal
+                store.proposal_calls[view.proposal.id] = view.calls
     return store
