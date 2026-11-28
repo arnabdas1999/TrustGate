@@ -40,6 +40,27 @@ services:
     volumes:
       - ./data/gate:/app/data/gate
 
+  # TrustGate's stdio MCP server for Claude Code, inside the compose network so it can reach
+  # the gate (whose port stays unpublished). No write tools; never gets .env.gate.
+  # Claude Code starts it on demand with: docker compose run --rm -T mcp
+  # (the profile keeps it out of `docker compose up`: a stdio server with no stdin would exit)
+  mcp:
+    build: .
+    command: ["python", "-m", "mcp_server"]
+    profiles: ["mcp"]
+    stdin_open: true
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TRUSTGATE_API_URL: http://api:8000
+      GATE_URL: http://gate:8100
+      # Links the MCP server prints are opened on the host
+      TRUSTGATE_WEB_URL: http://localhost:${WEB_PORT:-3000}
+    depends_on:
+      - api
+      - gate
+
   web:
     build:
       context: ./web
